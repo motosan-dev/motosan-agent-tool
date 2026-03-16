@@ -1,6 +1,6 @@
 [package]
 name = "motosan-agent-tool"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/motosan-dev/motosan-agent-tool"
@@ -10,11 +10,27 @@ authors = ["motosan-dev"]
 keywords = ["ai", "agent", "tool", "llm", "bot"]
 categories = ["development-tools"]
 
+[features]
+default = []
+web_search = ["dep:reqwest"]
+fetch_url = ["dep:reqwest"]
+read_file = []
+read_pdf = ["dep:pdf-extract"]
+read_spreadsheet = ["dep:calamine"]
+js_eval = ["dep:boa_engine"]
+python_eval = ["tokio/process"]
+all_tools = ["web_search", "fetch_url", "read_file", "read_pdf", "read_spreadsheet", "js_eval", "python_eval"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["sync", "rt"] }
+reqwest = { version = "0.12", features = ["json"], optional = true }
+pdf-extract = { version = "0.10", optional = true }
+calamine = { version = "0.34", features = ["dates"], optional = true }
+boa_engine = { version = "0.21", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tempfile = "3"
