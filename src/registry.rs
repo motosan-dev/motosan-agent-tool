@@ -45,6 +45,16 @@ impl ToolRegistry {
     pub async fn is_empty(&self) -> bool {
         self.tools.read().await.is_empty()
     }
+
+    /// Remove a tool by name. Returns the removed tool, if any.
+    pub async fn deregister(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.tools.write().await.remove(name)
+    }
+
+    /// Remove all tools from the registry.
+    pub async fn clear(&self) {
+        self.tools.write().await.clear();
+    }
 }
 
 impl Default for ToolRegistry {
@@ -114,5 +124,33 @@ mod tests {
     async fn get_missing_returns_none() {
         let registry = ToolRegistry::new();
         assert!(registry.get("missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn deregister_removes_tool() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(EchoTool)).await;
+        assert_eq!(registry.len().await, 1);
+
+        let removed = registry.deregister("echo").await;
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().def().name, "echo");
+        assert_eq!(registry.len().await, 0);
+    }
+
+    #[tokio::test]
+    async fn deregister_missing_returns_none() {
+        let registry = ToolRegistry::new();
+        assert!(registry.deregister("missing").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn clear_removes_all() {
+        let registry = ToolRegistry::new();
+        registry.register(Arc::new(EchoTool)).await;
+        assert!(!registry.is_empty().await);
+
+        registry.clear().await;
+        assert!(registry.is_empty().await);
     }
 }

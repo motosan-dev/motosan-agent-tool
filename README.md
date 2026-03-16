@@ -1,5 +1,7 @@
 # motosan-agent-tool
 
+[![CI](https://github.com/motosan-dev/motosan-agent-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/motosan-dev/motosan-agent-tool/actions/workflows/ci.yml)
+
 Shared AI agent tool kit for Rust. Provides the core `Tool` trait, registry, and built-in tools used by [motosan-chat](https://github.com/motosan-dev/motosan-chat) and [crucible-agent](https://github.com/daiwanwei/crucible-agent).
 
 ## Quick Start
