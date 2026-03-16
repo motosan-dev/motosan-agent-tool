@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] — 2026-03-16
+
+### Added
+- **Python package** (`python/`): Pure Python, zero runtime deps, mirrors Rust API
+- **TypeScript package** (`typescript/`): Strict TypeScript, ESM+CJS, mirrors Rust API (camelCase)
+- Both packages: Tool, ToolDef, ToolResult, ToolContent, ToolContext, ToolRegistry, ToolError
+
 ## [0.1.2] — 2026-03-16
 
 ### Added
