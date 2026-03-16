@@ -31,7 +31,7 @@ pub trait Tool: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Definition of a tool, suitable for serialization to LLM APIs (Claude, OpenAI, etc.).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ToolDef {
     pub name: String,
     pub description: String,
@@ -55,14 +55,12 @@ impl ToolDef {
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
-            .ok_or_else(|| {
-                Error::Validation("input_schema.properties must be an object".into())
-            })?;
+            .ok_or_else(|| Error::Validation("input_schema.properties must be an object".into()))?;
 
         if let Some(required) = schema.get("required") {
-            let required = required
-                .as_array()
-                .ok_or_else(|| Error::Validation("input_schema.required must be an array".into()))?;
+            let required = required.as_array().ok_or_else(|| {
+                Error::Validation("input_schema.required must be an array".into())
+            })?;
 
             for field in required {
                 let field_name = field.as_str().ok_or_else(|| {
@@ -90,9 +88,7 @@ impl ToolDef {
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
-            .ok_or_else(|| {
-                Error::Validation("input_schema.properties must be an object".into())
-            })?;
+            .ok_or_else(|| Error::Validation("input_schema.properties must be an object".into()))?;
 
         let args = args
             .as_object()
@@ -101,9 +97,9 @@ impl ToolDef {
         // Check required fields
         if let Some(required) = schema.get("required").and_then(Value::as_array) {
             for field in required {
-                let field_name = field
-                    .as_str()
-                    .ok_or_else(|| Error::Validation("required field name must be string".into()))?;
+                let field_name = field.as_str().ok_or_else(|| {
+                    Error::Validation("required field name must be string".into())
+                })?;
                 if !args.contains_key(field_name) {
                     return Err(Error::MissingField(field_name.into()));
                 }
@@ -159,7 +155,7 @@ impl ToolDef {
 /// Result returned by tool execution.
 ///
 /// Combines motosan-chat's typed content with crucible-agent's metadata fields.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolResult {
     /// Structured content blocks returned by the tool.
     pub content: Vec<ToolContent>,
@@ -239,11 +235,14 @@ impl ToolResult {
 // ---------------------------------------------------------------------------
 
 /// A single content block in a tool result.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "data")]
 pub enum ToolContent {
+    #[serde(rename = "text")]
     /// Plain text content.
     Text(String),
     /// Structured JSON content.
+    #[serde(rename = "json")]
     Json(Value),
 }
 
@@ -255,7 +254,7 @@ pub enum ToolContent {
 ///
 /// Contains common fields shared across platforms, plus an `extra` map for
 /// platform-specific data (crucible: org_id, project_id; chat: group_id, etc.).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ToolContext {
     /// Who is calling the tool (agent_id or user_id).
     pub caller_id: String,
@@ -415,6 +414,58 @@ mod tests {
         assert_eq!(r.citation.as_deref(), Some("https://example.com"));
         assert!(r.inject_to_context);
         assert_eq!(r.duration_ms, Some(42));
+    }
+
+    #[test]
+    fn serde_roundtrip_tool_def() {
+        let def = search_def();
+        let json = serde_json::to_string(&def).unwrap();
+        let back: ToolDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(def, back);
+    }
+
+    #[test]
+    fn serde_roundtrip_tool_result() {
+        let r = ToolResult::text("hello")
+            .with_citation("https://example.com")
+            .with_duration(42);
+        let json = serde_json::to_string(&r).unwrap();
+        let back: ToolResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.as_text(), Some("hello"));
+        assert_eq!(back.citation.as_deref(), Some("https://example.com"));
+        assert_eq!(back.duration_ms, Some(42));
+    }
+
+    #[test]
+    fn serde_roundtrip_tool_content() {
+        let text = ToolContent::Text("hi".into());
+        let json_val = ToolContent::Json(json!({"key": "value"}));
+
+        let text_json = serde_json::to_string(&text).unwrap();
+        let back: ToolContent = serde_json::from_str(&text_json).unwrap();
+        assert_eq!(text, back);
+
+        let json_json = serde_json::to_string(&json_val).unwrap();
+        let back: ToolContent = serde_json::from_str(&json_json).unwrap();
+        assert_eq!(json_val, back);
+    }
+
+    #[test]
+    fn serde_tool_content_tagged_format() {
+        let text = ToolContent::Text("hi".into());
+        let serialized: Value = serde_json::to_value(&text).unwrap();
+        assert_eq!(serialized["type"], "text");
+        assert_eq!(serialized["data"], "hi");
+    }
+
+    #[test]
+    fn serde_roundtrip_tool_context() {
+        let ctx = ToolContext::new("agent-1", "crucible").with("org_id", json!("motosan"));
+        let json = serde_json::to_string(&ctx).unwrap();
+        let back: ToolContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.caller_id, "agent-1");
+        assert_eq!(back.platform, "crucible");
+        assert_eq!(back.get_str("org_id"), Some("motosan"));
     }
 
     #[test]
