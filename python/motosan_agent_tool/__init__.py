@@ -3,6 +3,7 @@
 from .error import ErrorKind, ToolError
 from .registry import ToolRegistry
 from .tool import (
+    FunctionTool,
     JsonContent,
     TextContent,
     Tool,
@@ -10,11 +11,13 @@ from .tool import (
     ToolContext,
     ToolDef,
     ToolResult,
+    tool,
     tool_content_from_dict,
 )
 
 __all__ = [
     "ErrorKind",
+    "FunctionTool",
     "JsonContent",
     "TextContent",
     "Tool",
@@ -24,5 +27,6 @@ __all__ = [
     "ToolError",
     "ToolRegistry",
     "ToolResult",
+    "tool",
     "tool_content_from_dict",
 ]

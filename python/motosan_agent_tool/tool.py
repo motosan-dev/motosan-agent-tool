@@ -1,18 +1,23 @@
 """Core tool abstractions mirroring the Rust crate's tool module.
 
 Classes:
-    Tool        -- abstract base class for agent tools
-    ToolDef     -- tool name + description + JSON Schema
-    ToolResult  -- structured result returned by tool execution
-    ToolContent -- tagged union: TextContent | JsonContent
-    ToolContext -- execution context passed to every tool call
+    Tool         -- abstract base class for agent tools
+    FunctionTool -- wraps an async function as a Tool with auto-validation
+    ToolDef      -- tool name + description + JSON Schema
+    ToolResult   -- structured result returned by tool execution
+    ToolContent  -- tagged union: TextContent | JsonContent
+    ToolContext   -- execution context passed to every tool call
+
+Functions:
+    tool         -- decorator that turns an async function into a FunctionTool
 """
 
 from __future__ import annotations
 
 import abc
+import inspect
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple, Type, Union
+from typing import Any, Awaitable, Callable, Dict, List, Tuple, Type, Union
 
 from .error import ToolError
 
@@ -320,3 +325,94 @@ class Tool(abc.ABC):
     async def call(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         """Execute the tool."""
         ...
+
+
+# ---------------------------------------------------------------------------
+# FunctionTool
+# ---------------------------------------------------------------------------
+
+# Callback signature accepted by FunctionTool / @tool decorator.
+_ToolFn = Callable[[dict[str, Any], ToolContext], Awaitable[ToolResult]]
+
+
+class FunctionTool:
+    """Wraps a plain async function as a :class:`Tool` with auto-validation.
+
+    The wrapped function must accept ``(args, ctx)`` and return a
+    :class:`ToolResult`.  The ``input_schema`` is validated before every call.
+
+    Example::
+
+        async def _fetch(args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult.text(args["url"])
+
+        fetch = FunctionTool(
+            name="fetch",
+            description="Fetch a URL",
+            input_schema={...},
+            fn=_fetch,
+        )
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        input_schema: dict[str, Any],
+        fn: _ToolFn,
+    ) -> None:
+        self._def = ToolDef(
+            name=name, description=description, input_schema=input_schema
+        )
+        self._fn = fn
+
+    def def_(self) -> ToolDef:
+        """Return the tool definition."""
+        return self._def
+
+    async def call(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
+        """Validate *args* then invoke the wrapped function."""
+        self._def.validate_args(args)
+        result = self._fn(args, ctx)
+        if inspect.isawaitable(result):
+            return await result
+        return result  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# @tool decorator
+# ---------------------------------------------------------------------------
+
+
+def tool(
+    *,
+    name: str,
+    description: str,
+    input_schema: dict[str, Any],
+) -> Callable[[_ToolFn], FunctionTool]:
+    """Decorator that turns an async function into a :class:`FunctionTool`.
+
+    Example::
+
+        @tool(
+            name="get_weather",
+            description="Get weather for a city",
+            input_schema={
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+            },
+        )
+        async def get_weather(args: dict, ctx: ToolContext) -> ToolResult:
+            return ToolResult.text(f"Sunny in {args['city']}")
+
+        # get_weather is now a FunctionTool instance
+        result = await get_weather.call({"city": "Taipei"}, ctx)
+    """
+
+    def decorator(fn: _ToolFn) -> FunctionTool:
+        return FunctionTool(
+            name=name, description=description, input_schema=input_schema, fn=fn
+        )
+
+    return decorator
