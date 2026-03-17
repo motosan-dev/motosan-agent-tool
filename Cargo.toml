@@ -20,7 +20,10 @@ read_spreadsheet = ["dep:calamine"]
 js_eval = ["dep:boa_engine", "tokio/time"]
 python_eval = ["tokio/process", "tokio/time"]
 datetime = ["dep:chrono", "dep:chrono-tz"]
-all_tools = ["web_search", "fetch_url", "read_file", "read_pdf", "read_spreadsheet", "js_eval", "python_eval", "datetime"]
+currency_convert = ["dep:reqwest"]
+cost_calculator = ["currency_convert"]
+generate_pdf = ["dep:printpdf"]
+all_tools = ["web_search", "fetch_url", "read_file", "read_pdf", "read_spreadsheet", "js_eval", "python_eval", "datetime", "currency_convert", "cost_calculator", "generate_pdf"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -33,6 +36,7 @@ calamine = { version = "0.34", features = ["dates"], optional = true }
 boa_engine = { version = "0.21", optional = true }
 chrono = { version = "0.4", optional = true }
 chrono-tz = { version = "0.10", optional = true }
+printpdf = { version = "0.7", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
