@@ -27,6 +27,9 @@ pub mod python_eval;
 #[cfg(feature = "datetime")]
 pub mod datetime;
 
+#[cfg(feature = "currency_convert")]
+pub mod currency_convert;
+
 // Re-exports for convenience.
 #[cfg(feature = "web_search")]
 pub use web_search::WebSearchTool;
@@ -51,3 +54,18 @@ pub use python_eval::PythonEvalTool;
 
 #[cfg(feature = "datetime")]
 pub use datetime::DatetimeTool;
+
+#[cfg(feature = "currency_convert")]
+pub use currency_convert::CurrencyConvertTool;
+
+#[cfg(feature = "cost_calculator")]
+pub mod cost_calculator;
+
+#[cfg(feature = "cost_calculator")]
+pub use cost_calculator::CostCalculatorTool;
+
+#[cfg(feature = "generate_pdf")]
+pub mod generate_pdf;
+
+#[cfg(feature = "generate_pdf")]
+pub use generate_pdf::GeneratePdfTool;
