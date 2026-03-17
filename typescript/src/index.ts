@@ -9,3 +9,4 @@ export {
   ToolContext,
 } from "./tool.js";
 export { ToolRegistry } from "./registry.js";
+export { DatetimeTool } from "./tools/index.js";

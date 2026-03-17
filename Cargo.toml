@@ -19,7 +19,8 @@ read_pdf = ["dep:pdf-extract"]
 read_spreadsheet = ["dep:calamine"]
 js_eval = ["dep:boa_engine", "tokio/time"]
 python_eval = ["tokio/process", "tokio/time"]
-all_tools = ["web_search", "fetch_url", "read_file", "read_pdf", "read_spreadsheet", "js_eval", "python_eval"]
+datetime = ["dep:chrono", "dep:chrono-tz"]
+all_tools = ["web_search", "fetch_url", "read_file", "read_pdf", "read_spreadsheet", "js_eval", "python_eval", "datetime"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -30,6 +31,8 @@ reqwest = { version = "0.12", features = ["json"], optional = true }
 pdf-extract = { version = "0.10", optional = true }
 calamine = { version = "0.34", features = ["dates"], optional = true }
 boa_engine = { version = "0.21", optional = true }
+chrono = { version = "0.4", optional = true }
+chrono-tz = { version = "0.10", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

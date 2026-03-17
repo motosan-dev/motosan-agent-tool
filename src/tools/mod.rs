@@ -24,6 +24,9 @@ pub mod js_eval;
 #[cfg(feature = "python_eval")]
 pub mod python_eval;
 
+#[cfg(feature = "datetime")]
+pub mod datetime;
+
 // Re-exports for convenience.
 #[cfg(feature = "web_search")]
 pub use web_search::WebSearchTool;
@@ -45,3 +48,6 @@ pub use js_eval::JsEvalTool;
 
 #[cfg(feature = "python_eval")]
 pub use python_eval::PythonEvalTool;
+
+#[cfg(feature = "datetime")]
+pub use datetime::DatetimeTool;

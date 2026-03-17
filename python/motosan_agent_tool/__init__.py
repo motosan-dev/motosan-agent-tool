@@ -14,8 +14,10 @@ from .tool import (
     tool,
     tool_content_from_dict,
 )
+from .tools import DatetimeTool
 
 __all__ = [
+    "DatetimeTool",
     "ErrorKind",
     "FunctionTool",
     "JsonContent",
