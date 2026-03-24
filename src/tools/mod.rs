@@ -69,3 +69,35 @@ pub mod generate_pdf;
 
 #[cfg(feature = "generate_pdf")]
 pub use generate_pdf::GeneratePdfTool;
+
+#[cfg(feature = "browser")]
+pub mod browser_act;
+#[cfg(feature = "browser")]
+pub mod browser_auth;
+#[cfg(feature = "browser")]
+pub mod browser_common;
+#[cfg(feature = "browser")]
+pub mod browser_navigate;
+#[cfg(feature = "browser")]
+pub mod browser_read;
+#[cfg(feature = "browser")]
+pub mod browser_screenshot;
+#[cfg(feature = "browser")]
+pub mod browser_snapshot;
+#[cfg(feature = "browser")]
+pub mod browser_wait;
+
+#[cfg(feature = "browser")]
+pub use browser_act::BrowserActTool;
+#[cfg(feature = "browser")]
+pub use browser_auth::BrowserAuthTool;
+#[cfg(feature = "browser")]
+pub use browser_navigate::BrowserNavigateTool;
+#[cfg(feature = "browser")]
+pub use browser_read::BrowserReadTool;
+#[cfg(feature = "browser")]
+pub use browser_screenshot::BrowserScreenshotTool;
+#[cfg(feature = "browser")]
+pub use browser_snapshot::BrowserSnapshotTool;
+#[cfg(feature = "browser")]
+pub use browser_wait::BrowserWaitTool;

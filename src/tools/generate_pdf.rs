@@ -124,8 +124,7 @@ fn render_pdf(input: &GeneratePdfInput) -> std::result::Result<(u32, u64), Strin
     use printpdf::*;
 
     let title = input.title.as_deref().unwrap_or("Document");
-    let (doc, page_idx, layer_idx) =
-        PdfDocument::new(title, Mm(210.0), Mm(297.0), "Layer 1");
+    let (doc, page_idx, layer_idx) = PdfDocument::new(title, Mm(210.0), Mm(297.0), "Layer 1");
 
     let font_regular = doc
         .add_builtin_font(BuiltinFont::Helvetica)
@@ -226,7 +225,9 @@ fn render_pdf(input: &GeneratePdfInput) -> std::result::Result<(u32, u64), Strin
         }
     }
 
-    let pdf_bytes = doc.save_to_bytes().map_err(|e| format!("Failed to save PDF: {e}"))?;
+    let pdf_bytes = doc
+        .save_to_bytes()
+        .map_err(|e| format!("Failed to save PDF: {e}"))?;
     let size_bytes = pdf_bytes.len() as u64;
 
     std::fs::write(&input.output_path, &pdf_bytes)

@@ -23,7 +23,8 @@ datetime = ["dep:chrono", "dep:chrono-tz"]
 currency_convert = ["dep:reqwest"]
 cost_calculator = ["currency_convert"]
 generate_pdf = ["dep:printpdf"]
-all_tools = ["web_search", "fetch_url", "read_file", "read_pdf", "read_spreadsheet", "js_eval", "python_eval", "datetime", "currency_convert", "cost_calculator", "generate_pdf"]
+browser = ["tokio/process", "tokio/time"]
+all_tools = ["web_search", "fetch_url", "read_file", "read_pdf", "read_spreadsheet", "js_eval", "python_eval", "datetime", "currency_convert", "cost_calculator", "generate_pdf", "browser"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
