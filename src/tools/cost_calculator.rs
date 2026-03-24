@@ -86,12 +86,7 @@ impl CostCalculatorTool {
 
     /// Get the exchange rate from `from` to `to`.
     /// Returns 1.0 if `from == to` (no conversion needed).
-    async fn get_rate(
-        &self,
-        from: &str,
-        to: &str,
-        ctx: &ToolContext,
-    ) -> Result<f64, String> {
+    async fn get_rate(&self, from: &str, to: &str, ctx: &ToolContext) -> Result<f64, String> {
         if from == to {
             return Ok(1.0);
         }
@@ -266,8 +261,8 @@ impl Tool for CostCalculatorTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     fn test_ctx() -> ToolContext {
         ToolContext::new("test-agent", "test")
@@ -329,7 +324,11 @@ mod tests {
         });
 
         let result = tool.call(input, &ctx).await;
-        assert!(!result.is_error, "Expected success but got: {:?}", result.as_text());
+        assert!(
+            !result.is_error,
+            "Expected success but got: {:?}",
+            result.as_text()
+        );
 
         let json_val = match &result.content[0] {
             crate::ToolContent::Json(v) => v,
@@ -373,7 +372,11 @@ mod tests {
         });
 
         let result = tool.call(input, &ctx).await;
-        assert!(!result.is_error, "Expected success but got: {:?}", result.as_text());
+        assert!(
+            !result.is_error,
+            "Expected success but got: {:?}",
+            result.as_text()
+        );
 
         let json_val = match &result.content[0] {
             crate::ToolContent::Json(v) => v,

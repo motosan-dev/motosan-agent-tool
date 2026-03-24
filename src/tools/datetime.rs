@@ -113,9 +113,9 @@ impl Tool for DatetimeTool {
 
 fn resolve_tz(tz_str: Option<&str>) -> Result<Tz, ToolResult> {
     let tz_name = tz_str.unwrap_or("UTC");
-    tz_name.parse::<Tz>().map_err(|_| {
-        ToolResult::error(format!("Unknown timezone: {tz_name}"))
-    })
+    tz_name
+        .parse::<Tz>()
+        .map_err(|_| ToolResult::error(format!("Unknown timezone: {tz_name}")))
 }
 
 fn handle_get_current_datetime(input: &DatetimeInput) -> ToolResult {
@@ -380,11 +380,17 @@ fn format_human_diff(days: i64) -> String {
     let months = abs_days / 30;
 
     if abs_days < 7 {
-        format!("{prefix}{abs_days} day{}", if abs_days == 1 { "" } else { "s" })
+        format!(
+            "{prefix}{abs_days} day{}",
+            if abs_days == 1 { "" } else { "s" }
+        )
     } else if remaining_days == 0 {
         format!("{prefix}{weeks} week{}", if weeks == 1 { "" } else { "s" })
     } else if months >= 1 && abs_days.is_multiple_of(30) {
-        format!("{prefix}{months} month{}", if months == 1 { "" } else { "s" })
+        format!(
+            "{prefix}{months} month{}",
+            if months == 1 { "" } else { "s" }
+        )
     } else {
         format!("{prefix}{abs_days} days")
     }
