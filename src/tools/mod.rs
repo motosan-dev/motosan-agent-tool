@@ -75,6 +75,8 @@ pub mod browser_act;
 #[cfg(feature = "browser")]
 pub mod browser_auth;
 #[cfg(feature = "browser")]
+pub mod browser_common;
+#[cfg(feature = "browser")]
 pub mod browser_navigate;
 #[cfg(feature = "browser")]
 pub mod browser_read;

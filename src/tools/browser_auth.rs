@@ -4,14 +4,13 @@ use std::pin::Pin;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::browser_common::{not_found_or_error, BINARY};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
-
-const BINARY: &str = "agent-browser";
 
 /// A tool that manages browser authentication state via `agent-browser`.
 ///
 /// Actions:
-/// - `load`: Next `open` uses `--state <path>` to load auth state.
+/// - `load`: Advisory — tells the LLM agent to pass `--state <path>` on the next command.
 /// - `save`: Runs `agent-browser state save <path>` to persist current state.
 /// - `auto-connect-save`: Runs `agent-browser --auto-connect state save <path>`.
 pub struct BrowserAuthTool;
@@ -38,10 +37,11 @@ impl Tool for BrowserAuthTool {
     fn def(&self) -> ToolDef {
         ToolDef {
             name: "browser_auth".to_string(),
-            description: "Manage browser authentication state. Actions: load (use auth state on \
-                next open), save (persist current state), auto-connect-save (save with \
-                auto-connect)."
-                .to_string(),
+            description:
+                "Manage browser authentication state. Actions: load (advisory — tells you \
+                to pass --state on next command), save (persist current state), auto-connect-save \
+                (save with auto-connect)."
+                    .to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -73,11 +73,12 @@ impl Tool for BrowserAuthTool {
 
             match input.action.as_str() {
                 "load" => {
-                    // "load" tells the system that the next open should use --state <path>.
-                    // Since we delegate to agent-browser, we validate the path and return
-                    // instructions for the caller.
+                    // "load" is advisory only. This tool does not persist any state between
+                    // calls. The calling agent must pass --state <path> on subsequent commands.
                     ToolResult::text(format!(
-                        "Auth state loaded. Next browser_navigate will use --state {}",
+                        "Advisory: To use auth state from {}, pass --state flag on your next \
+                         agent-browser command. This tool does not persist state between calls \
+                         \u{2014} the calling agent must manage this.",
                         input.path
                     ))
                 }
@@ -131,19 +132,6 @@ async fn run_state_save(path: &str, auto_connect: bool) -> ToolResult {
     }
 }
 
-fn not_found_or_error(e: std::io::Error) -> String {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        format!(
-            "agent-browser not found. Please install it:\n\
-             \n  cargo install agent-browser\n\
-             \nor download from https://github.com/anthropics/agent-browser\n\
-             \nError: {e}"
-        )
-    } else {
-        format!("Failed to spawn agent-browser: {e}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,7 +164,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_handle_load_action() {
+    async fn should_handle_load_action_as_advisory() {
         let tool = BrowserAuthTool::new();
         let ctx = test_ctx();
         let result = tool
@@ -187,8 +175,9 @@ mod tests {
             .await;
         assert!(!result.is_error);
         let text = result.as_text().unwrap();
-        assert!(text.contains("Auth state loaded"), "Got: {text}");
+        assert!(text.contains("Advisory"), "Got: {text}");
         assert!(text.contains("~/.pilot/auth.json"), "Got: {text}");
+        assert!(text.contains("does not persist state"), "Got: {text}");
     }
 
     #[tokio::test]

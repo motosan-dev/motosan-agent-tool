@@ -4,9 +4,8 @@ use std::pin::Pin;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::browser_common::{not_found_or_error, BINARY};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
-
-const BINARY: &str = "agent-browser";
 
 /// A tool that interacts with browser elements via `agent-browser` actions
 /// (click, fill, type, hover, select, check, press).
@@ -19,6 +18,9 @@ struct Input {
     element_ref: Option<String>,
     value: Option<String>,
 }
+
+/// Actions that require a `value` parameter.
+const VALUE_REQUIRED_ACTIONS: &[&str] = &["fill", "type", "select"];
 
 impl Default for BrowserActTool {
     fn default() -> Self {
@@ -53,7 +55,7 @@ impl Tool for BrowserActTool {
                     },
                     "value": {
                         "type": "string",
-                        "description": "Value for fill/type/select/press actions"
+                        "description": "Value for fill/type/select/press actions (required for fill/type/select)"
                     }
                 },
                 "required": ["action"]
@@ -96,6 +98,14 @@ impl Tool for BrowserActTool {
                         input.action
                     ));
                 }
+            }
+
+            // Validate that actions requiring a value have one
+            if VALUE_REQUIRED_ACTIONS.contains(&input.action.as_str()) && input.value.is_none() {
+                return ToolResult::error(format!(
+                    "Action '{}' requires a 'value' parameter",
+                    input.action
+                ));
             }
 
             // Add value for actions that need it
@@ -141,19 +151,6 @@ impl Tool for BrowserActTool {
     }
 }
 
-fn not_found_or_error(e: std::io::Error) -> String {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        format!(
-            "agent-browser not found. Please install it:\n\
-             \n  cargo install agent-browser\n\
-             \nor download from https://github.com/anthropics/agent-browser\n\
-             \nError: {e}"
-        )
-    } else {
-        format!("Failed to spawn agent-browser: {e}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,8 +188,52 @@ mod tests {
         let tool = BrowserActTool::new();
         let ctx = test_ctx();
         let result = tool.call(json!({"action": "click"}), &ctx).await;
-        // Either binary not found OR ref validation error — both are errors
         assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn should_require_value_for_fill() {
+        let tool = BrowserActTool::new();
+        let ctx = test_ctx();
+        let result = tool
+            .call(json!({"action": "fill", "ref": "@e1"}), &ctx)
+            .await;
+        assert!(result.is_error);
+        let text = result.as_text().unwrap();
+        assert!(
+            text.contains("requires a 'value'"),
+            "Expected value validation error, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_require_value_for_type() {
+        let tool = BrowserActTool::new();
+        let ctx = test_ctx();
+        let result = tool
+            .call(json!({"action": "type", "ref": "@e2"}), &ctx)
+            .await;
+        assert!(result.is_error);
+        let text = result.as_text().unwrap();
+        assert!(
+            text.contains("requires a 'value'"),
+            "Expected value validation error, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_require_value_for_select() {
+        let tool = BrowserActTool::new();
+        let ctx = test_ctx();
+        let result = tool
+            .call(json!({"action": "select", "ref": "@e3"}), &ctx)
+            .await;
+        assert!(result.is_error);
+        let text = result.as_text().unwrap();
+        assert!(
+            text.contains("requires a 'value'"),
+            "Expected value validation error, got: {text}"
+        );
     }
 
     #[tokio::test]

@@ -4,9 +4,9 @@ use std::pin::Pin;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::browser_common::{not_found_or_error, BINARY};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
 
-const BINARY: &str = "agent-browser";
 const DEFAULT_TIMEOUT_MS: u64 = 30000;
 
 /// A tool that waits for a browser condition via `agent-browser wait <event> [value] [--timeout <ms>]`.
@@ -138,19 +138,6 @@ impl Tool for BrowserWaitTool {
                 Err(_) => ToolResult::error(format!("Execution timed out after {timeout_ms}ms")),
             }
         })
-    }
-}
-
-fn not_found_or_error(e: std::io::Error) -> String {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        format!(
-            "agent-browser not found. Please install it:\n\
-             \n  cargo install agent-browser\n\
-             \nor download from https://github.com/anthropics/agent-browser\n\
-             \nError: {e}"
-        )
-    } else {
-        format!("Failed to spawn agent-browser: {e}")
     }
 }
 

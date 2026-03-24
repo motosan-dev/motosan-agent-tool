@@ -4,9 +4,8 @@ use std::pin::Pin;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::browser_common::{not_found_or_error, validate_url, BINARY};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
-
-const BINARY: &str = "agent-browser";
 
 /// A tool that navigates to a URL using `agent-browser open <url>`.
 pub struct BrowserNavigateTool;
@@ -38,7 +37,7 @@ impl Tool for BrowserNavigateTool {
                 "properties": {
                     "url": {
                         "type": "string",
-                        "description": "The URL to navigate to"
+                        "description": "The URL to navigate to (must start with http://, https://, or file://)"
                     }
                 },
                 "required": ["url"]
@@ -56,6 +55,10 @@ impl Tool for BrowserNavigateTool {
                 Ok(v) => v,
                 Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
             };
+
+            if let Err(result) = validate_url(&input.url) {
+                return result;
+            }
 
             let child = match tokio::process::Command::new(BINARY)
                 .arg("open")
@@ -97,19 +100,6 @@ impl Tool for BrowserNavigateTool {
     }
 }
 
-fn not_found_or_error(e: std::io::Error) -> String {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        format!(
-            "agent-browser not found. Please install it:\n\
-             \n  cargo install agent-browser\n\
-             \nor download from https://github.com/anthropics/agent-browser\n\
-             \nError: {e}"
-        )
-    } else {
-        format!("Failed to spawn agent-browser: {e}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,12 +131,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn should_reject_invalid_url_scheme() {
+        let tool = BrowserNavigateTool::new();
+        let ctx = test_ctx();
+        let result = tool.call(json!({"url": "ftp://example.com"}), &ctx).await;
+        assert!(result.is_error);
+        let text = result.as_text().unwrap();
+        assert!(text.contains("Invalid URL"), "Got: {text}");
+        assert!(text.contains("http://"), "Got: {text}");
+    }
+
+    #[tokio::test]
+    async fn should_reject_bare_string_url() {
+        let tool = BrowserNavigateTool::new();
+        let ctx = test_ctx();
+        let result = tool.call(json!({"url": "example.com"}), &ctx).await;
+        assert!(result.is_error);
+        let text = result.as_text().unwrap();
+        assert!(text.contains("Invalid URL"), "Got: {text}");
+    }
+
+    #[tokio::test]
     async fn should_return_not_found_when_binary_missing() {
         // This test only validates the error path when agent-browser is not installed
         let tool = BrowserNavigateTool::new();
         let ctx = test_ctx();
         let result = tool.call(json!({"url": "https://example.com"}), &ctx).await;
-        // If agent-browser IS installed, the command may succeed — that's fine too
+        // If agent-browser IS installed, the command may succeed -- that's fine too
         if result.is_error {
             let text = result.as_text().unwrap();
             // Either "not found" or some other spawn error

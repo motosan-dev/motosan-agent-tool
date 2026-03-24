@@ -4,9 +4,8 @@ use std::pin::Pin;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::browser_common::{not_found_or_error, BINARY};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
-
-const BINARY: &str = "agent-browser";
 
 /// A tool that reads data from the browser via `agent-browser get <target> [@ref]`.
 pub struct BrowserReadTool;
@@ -120,19 +119,6 @@ impl Tool for BrowserReadTool {
                 Err(_) => ToolResult::error("Execution timed out after 30 seconds"),
             }
         })
-    }
-}
-
-fn not_found_or_error(e: std::io::Error) -> String {
-    if e.kind() == std::io::ErrorKind::NotFound {
-        format!(
-            "agent-browser not found. Please install it:\n\
-             \n  cargo install agent-browser\n\
-             \nor download from https://github.com/anthropics/agent-browser\n\
-             \nError: {e}"
-        )
-    } else {
-        format!("Failed to spawn agent-browser: {e}")
     }
 }
 
