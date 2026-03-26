@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/motosan-dev/motosan-agent-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/motosan-dev/motosan-agent-tool/actions/workflows/ci.yml)
 
-Shared AI agent tool kit — Rust, Python, and TypeScript. Provides the core `Tool` trait, registry, and 11 feature-gated built-in tools used by [motosan-chat](https://github.com/motosan-dev/motosan-chat) and [crucible-agent](https://github.com/daiwanwei/crucible-agent).
+Shared AI agent tool kit — Rust, Python, and TypeScript. Provides the core `Tool` trait, registry, and 18 feature-gated built-in tools used by [motosan-chat](https://github.com/motosan-dev/motosan-chat) and [crucible-agent](https://github.com/daiwanwei/crucible-agent).
 
 ## Quick Start
 
@@ -95,6 +95,13 @@ All tools are feature-gated. Enable individually or use `all_tools` to enable al
 | `CurrencyConvertTool` | `currency_convert` | Live exchange rates with caching and API fallback |
 | `CostCalculatorTool` | `cost_calculator` | Multi-currency cost breakdown with auto conversion |
 | `GeneratePdfTool` | `generate_pdf` | Generate PDF from text/Markdown |
+| `BrowserNavigateTool` | `browser` | Open URLs via `agent-browser` |
+| `BrowserActTool` | `browser` | Click, fill, type, hover, select, check, press |
+| `BrowserReadTool` | `browser` | Read text, HTML, attributes from elements |
+| `BrowserSnapshotTool` | `browser` | Capture accessibility tree snapshot |
+| `BrowserScreenshotTool` | `browser` | Take page screenshots |
+| `BrowserWaitTool` | `browser` | Wait for navigation, selector, or network idle |
+| `BrowserAuthTool` | `browser` | Save/load authentication state |
 
 ```toml
 # Enable specific tools

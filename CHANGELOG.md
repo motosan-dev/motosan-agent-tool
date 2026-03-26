@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **CurrencyConvertTool** — live exchange rates via free APIs with 1-hour cache and automatic fallback (feature: `currency_convert`)
 - **CostCalculatorTool** — multi-currency cost breakdown with automatic conversion (feature: `cost_calculator`)
 - **GeneratePdfTool** — generate PDF files from plain text or basic Markdown with path traversal protection (feature: `generate_pdf`)
+- **Browser tools** — 7 tools powered by `agent-browser` CLI (feature: `browser`):
+  - `BrowserNavigateTool` — open URLs with validation
+  - `BrowserActTool` — click, fill, type, hover, select, check, press
+  - `BrowserReadTool` — read text, HTML, attributes from elements
+  - `BrowserSnapshotTool` — capture accessibility tree snapshot
+  - `BrowserScreenshotTool` — take page screenshots
+  - `BrowserWaitTool` — wait for navigation, selector, or network idle
+  - `BrowserAuthTool` — save/load authentication state
 - **Python `FunctionTool`** class and `@tool` decorator for defining tools from plain functions
 - **Python `DatetimeTool`** built-in (mirrors Rust API)
 - Release metadata in `pyproject.toml` and `package.json`
