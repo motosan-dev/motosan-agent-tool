@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.1] — 2026-03-26
+
+### Added
+- **DatetimeTool** built-in — `get_current_datetime`, `date_add`, `date_diff` with timezone support (feature: `datetime`)
+- **CurrencyConvertTool** — live exchange rates via free APIs with 1-hour cache and automatic fallback (feature: `currency_convert`)
+- **CostCalculatorTool** — multi-currency cost breakdown with automatic conversion (feature: `cost_calculator`)
+- **GeneratePdfTool** — generate PDF files from plain text or basic Markdown with path traversal protection (feature: `generate_pdf`)
+- **Python `FunctionTool`** class and `@tool` decorator for defining tools from plain functions
+- **Python `DatetimeTool`** built-in (mirrors Rust API)
+- Release metadata in `pyproject.toml` and `package.json`
+
+### Fixed
+- Python 3.9 compatibility — replaced PEP 604 unions with `typing.Union`
+- Added `tokio/time` feature to `js_eval` and `python_eval` features
+
 ## [0.2.0] — 2026-03-16
 
 ### Added
