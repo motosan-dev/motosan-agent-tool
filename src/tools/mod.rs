@@ -85,6 +85,8 @@ pub mod browser_screenshot;
 #[cfg(feature = "browser")]
 pub mod browser_snapshot;
 #[cfg(feature = "browser")]
+pub mod browser_tab;
+#[cfg(feature = "browser")]
 pub mod browser_wait;
 
 #[cfg(feature = "browser")]
@@ -99,5 +101,7 @@ pub use browser_read::BrowserReadTool;
 pub use browser_screenshot::BrowserScreenshotTool;
 #[cfg(feature = "browser")]
 pub use browser_snapshot::BrowserSnapshotTool;
+#[cfg(feature = "browser")]
+pub use browser_tab::BrowserTabTool;
 #[cfg(feature = "browser")]
 pub use browser_wait::BrowserWaitTool;
