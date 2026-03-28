@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::browser_common::{not_found_or_error, BINARY};
+use super::browser_common::{browser_session, command_with_session, not_found_or_error};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
 
 /// A tool that manages browser authentication state via `agent-browser`.
@@ -63,8 +63,9 @@ impl Tool for BrowserAuthTool {
     fn call(
         &self,
         args: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+        let session = browser_session(ctx);
         Box::pin(async move {
             let input: Input = match serde_json::from_value(args) {
                 Ok(v) => v,
@@ -82,8 +83,8 @@ impl Tool for BrowserAuthTool {
                         input.path
                     ))
                 }
-                "save" => run_state_save(&input.path, false).await,
-                "auto-connect-save" => run_state_save(&input.path, true).await,
+                "save" => run_state_save(session.as_deref(), &input.path, false).await,
+                "auto-connect-save" => run_state_save(session.as_deref(), &input.path, true).await,
                 _ => ToolResult::error(format!(
                     "Unknown action '{}'. Valid actions: load, save, auto-connect-save",
                     input.action
@@ -93,8 +94,8 @@ impl Tool for BrowserAuthTool {
     }
 }
 
-async fn run_state_save(path: &str, auto_connect: bool) -> ToolResult {
-    let mut cmd = tokio::process::Command::new(BINARY);
+async fn run_state_save(session: Option<&str>, path: &str, auto_connect: bool) -> ToolResult {
+    let mut cmd = command_with_session(session);
     if auto_connect {
         cmd.arg("--auto-connect");
     }

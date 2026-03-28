@@ -3,7 +3,7 @@ use std::pin::Pin;
 
 use serde_json::json;
 
-use super::browser_common::{not_found_or_error, BINARY};
+use super::browser_common::{browser_session, command_with_session, not_found_or_error};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
 
 /// A tool that captures the accessibility tree snapshot via `agent-browser snapshot`.
@@ -39,10 +39,11 @@ impl Tool for BrowserSnapshotTool {
     fn call(
         &self,
         _args: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+        let session = browser_session(ctx);
         Box::pin(async move {
-            let child = match tokio::process::Command::new(BINARY)
+            let child = match command_with_session(session.as_deref())
                 .arg("snapshot")
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())

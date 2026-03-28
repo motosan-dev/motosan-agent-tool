@@ -4,7 +4,9 @@ use std::pin::Pin;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::browser_common::{not_found_or_error, validate_url, BINARY};
+use super::browser_common::{
+    browser_session, command_with_session, not_found_or_error, validate_url,
+};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
 
 /// A tool that navigates to a URL using `agent-browser open <url>`.
@@ -48,8 +50,9 @@ impl Tool for BrowserNavigateTool {
     fn call(
         &self,
         args: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+        let session = browser_session(ctx);
         Box::pin(async move {
             let input: Input = match serde_json::from_value(args) {
                 Ok(v) => v,
@@ -60,7 +63,7 @@ impl Tool for BrowserNavigateTool {
                 return result;
             }
 
-            let child = match tokio::process::Command::new(BINARY)
+            let child = match command_with_session(session.as_deref())
                 .arg("open")
                 .arg(&input.url)
                 .stdout(std::process::Stdio::piped())

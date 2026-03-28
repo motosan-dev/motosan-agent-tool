@@ -3,7 +3,7 @@
 //! This module provides the common binary name constant and error helper
 //! used by all `browser_*` tools, eliminating duplication across 7 files.
 
-use crate::ToolResult;
+use crate::{ToolContext, ToolResult};
 
 /// The name of the external browser automation binary.
 pub const BINARY: &str = "agent-browser";
@@ -23,6 +23,20 @@ pub fn not_found_or_error(e: std::io::Error) -> String {
     } else {
         format!("Failed to spawn agent-browser: {e}")
     }
+}
+
+/// Build the base Command for agent-browser, injecting --session-name if provided.
+pub fn command_with_session(session: Option<&str>) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(BINARY);
+    if let Some(s) = session {
+        cmd.arg("--session-name").arg(s);
+    }
+    cmd
+}
+
+/// Extract the browser session name from a ToolContext (call before entering async block).
+pub fn browser_session(ctx: &ToolContext) -> Option<String> {
+    ctx.get_str("browser_session").map(String::from)
 }
 
 /// Validate that a URL starts with an allowed scheme (`http://`, `https://`, or `file://`).

@@ -4,7 +4,7 @@ use std::pin::Pin;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::browser_common::{not_found_or_error, BINARY};
+use super::browser_common::{browser_session, command_with_session, not_found_or_error};
 use crate::{Tool, ToolContext, ToolDef, ToolResult};
 
 const DEFAULT_TIMEOUT_MS: u64 = 30000;
@@ -65,8 +65,9 @@ impl Tool for BrowserWaitTool {
     fn call(
         &self,
         args: serde_json::Value,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+        let session = browser_session(ctx);
         Box::pin(async move {
             let input: Input = match serde_json::from_value(args) {
                 Ok(v) => v,
@@ -101,7 +102,7 @@ impl Tool for BrowserWaitTool {
             cmd_args.push("--timeout".to_string());
             cmd_args.push(timeout_ms.to_string());
 
-            let child = match tokio::process::Command::new(BINARY)
+            let child = match command_with_session(session.as_deref())
                 .args(&cmd_args)
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
