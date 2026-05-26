@@ -1,9 +1,36 @@
-use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
+//! The `Tool` trait, execution context, and runtime tool output type.
+//!
+//! `motosan-agent-tool` 0.4 aligns with `motosan-agent-primitives`: the
+//! wire-format types (`ToolCall`, `ToolResult`, `ToolAnnotations`,
+//! `ContentBlock`) come from primitives, and the `Tool` trait lives here
+//! (per design decisions D1=B and D10=A in the primitives implementation
+//! plan).
+//!
+//! ## What lives where
+//!
+//! | Type | Crate | Role |
+//! |------|-------|------|
+//! | [`Tool`] (trait) | `motosan-agent-tool` | Async trait every tool implements |
+//! | [`ToolContext`] | `motosan-agent-tool` | Per-call execution context (incl. cancellation token) |
+//! | [`ToolOutput`] | `motosan-agent-tool` | Rich return type from [`Tool::call`] (engine-side metadata) |
+//! | [`ToolDef`] | `motosan-agent-tool` | Schema / description shipped to the LLM |
+//! | `ToolCall` | `motosan-agent-primitives` | Assistant-issued tool invocation (wire) |
+//! | `ToolResult` | `motosan-agent-primitives` | Wire reply to a `ToolCall` |
+//! | `ToolAnnotations` | `motosan-agent-primitives` | Capability metadata read by `PermissionPolicy` |
+//! | `ContentBlock` | `motosan-agent-primitives` | Multimodal content payload |
+//!
+//! The engine (in `motosan-agent-loop`) is responsible for stamping a
+//! [`ToolOutput`] with its originating `tool_use_id` and converting it into
+//! a wire-format `primitives::ToolResult` at the boundary — see
+//! [`ToolOutput::into_tool_result`].
 
+use std::collections::HashMap;
+
+use async_trait::async_trait;
+use motosan_agent_primitives::{ContentBlock, ToolAnnotations, ToolResult};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 use crate::{Error, Result};
 
@@ -11,19 +38,33 @@ use crate::{Error, Result};
 // Tool trait
 // ---------------------------------------------------------------------------
 
-/// A tool that can be called by an LLM agent.
+/// A tool that can be invoked by an LLM agent.
 ///
-/// Shared between motosan-chat (chat bots) and crucible-agent (forum pipelines).
+/// In 0.4 the trait is `async fn` (via [`macro@async_trait`]) — the explicit
+/// `Pin<Box<dyn Future>>` boilerplate from 0.3.x is gone.
+///
+/// # Annotations are mandatory
+///
+/// Every tool **must** explicitly implement [`Tool::annotations`]. There is
+/// no default impl on purpose: Rust's `Default` for [`ToolAnnotations`] sets
+/// `destructive = false`, which is unsafe to assume — under
+/// `PermissionMode::Plan` a `destructive = false` tool is allowed to run
+/// even when it touches the network. See the type-level warning on
+/// [`ToolAnnotations`] for the full rationale.
+///
+/// When in doubt, set `destructive = true`.
+#[async_trait]
 pub trait Tool: Send + Sync {
     /// Return the tool definition (name, description, input schema).
     fn def(&self) -> ToolDef;
 
+    /// Declare capability annotations.
+    ///
+    /// Mandatory — no default. See trait-level doc for why.
+    fn annotations(&self) -> ToolAnnotations;
+
     /// Execute the tool with the given arguments and context.
-    fn call(
-        &self,
-        args: Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>>;
+    async fn call(&self, args: Value, ctx: &ToolContext) -> ToolOutput;
 }
 
 // ---------------------------------------------------------------------------
@@ -33,8 +74,11 @@ pub trait Tool: Send + Sync {
 /// Definition of a tool, suitable for serialization to LLM APIs (Claude, OpenAI, etc.).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ToolDef {
+    /// Registered tool name.
     pub name: String,
+    /// Human-readable description shown to the model.
     pub description: String,
+    /// JSON Schema describing the tool's input shape.
     pub input_schema: Value,
 }
 
@@ -149,31 +193,51 @@ impl ToolDef {
 }
 
 // ---------------------------------------------------------------------------
-// ToolResult
+// ToolOutput
 // ---------------------------------------------------------------------------
 
-/// Result returned by tool execution.
+/// Rich return value from [`Tool::call`].
 ///
-/// Combines motosan-chat's typed content with crucible-agent's metadata fields.
+/// `ToolOutput` is the **tool author's** return type. It carries the
+/// content payload (as `primitives::ContentBlock` so it matches the wire
+/// format) plus engine-side metadata (citation, context-injection hint,
+/// duration). The engine (`motosan-agent-loop`) stamps the originating
+/// `tool_use_id` and converts to a wire-format
+/// [`primitives::ToolResult`](motosan_agent_primitives::ToolResult) via
+/// [`ToolOutput::into_tool_result`] before sending back to the model.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ToolResult {
+pub struct ToolOutput {
     /// Structured content blocks returned by the tool.
-    pub content: Vec<ToolContent>,
+    ///
+    /// In 0.4 this uses the shared
+    /// [`ContentBlock`] type from
+    /// primitives. JSON results are wrapped in a
+    /// [`ContentBlock::Json`] holding a structured value (use
+    /// [`ToolOutput::json`] to construct, [`ToolOutput::as_json`] to read
+    /// back).
+    pub content: Vec<ContentBlock>,
     /// Whether the result represents an error.
     pub is_error: bool,
     /// Source URL for citation (e.g. web_search result, fetch_url target).
+    ///
+    /// Engine-side metadata: stripped when converting to
+    /// `primitives::ToolResult` via [`ToolOutput::into_tool_result`].
     pub citation: Option<String>,
     /// Whether this result should be injected into the next round's context.
+    ///
+    /// Engine-side metadata: not part of the wire `ToolResult`.
     pub inject_to_context: bool,
     /// Execution time in milliseconds.
+    ///
+    /// Engine-side metadata: not part of the wire `ToolResult`.
     pub duration_ms: Option<u64>,
 }
 
-impl ToolResult {
+impl ToolOutput {
     /// Successful text result.
     pub fn text(text: impl Into<String>) -> Self {
         Self {
-            content: vec![ToolContent::Text(text.into())],
+            content: vec![ContentBlock::Text { text: text.into() }],
             is_error: false,
             citation: None,
             inject_to_context: false,
@@ -182,9 +246,13 @@ impl ToolResult {
     }
 
     /// Successful JSON result.
+    ///
+    /// The value is wrapped in a [`ContentBlock::Json`] so downstream
+    /// processors can walk the structured payload without re-parsing a
+    /// string. Use [`ToolOutput::as_json`] to extract it back.
     pub fn json(value: Value) -> Self {
         Self {
-            content: vec![ToolContent::Json(value)],
+            content: vec![ContentBlock::Json { value }],
             is_error: false,
             citation: None,
             inject_to_context: false,
@@ -195,7 +263,9 @@ impl ToolResult {
     /// Error result.
     pub fn error(message: impl Into<String>) -> Self {
         Self {
-            content: vec![ToolContent::Text(message.into())],
+            content: vec![ContentBlock::Text {
+                text: message.into(),
+            }],
             is_error: true,
             citation: None,
             inject_to_context: false,
@@ -224,26 +294,40 @@ impl ToolResult {
     /// Get the first text content, if any.
     pub fn as_text(&self) -> Option<&str> {
         self.content.iter().find_map(|c| match c {
-            ToolContent::Text(s) => Some(s.as_str()),
+            ContentBlock::Text { text } => Some(text.as_str()),
             _ => None,
         })
     }
-}
 
-// ---------------------------------------------------------------------------
-// ToolContent
-// ---------------------------------------------------------------------------
+    /// Try to extract the first structured JSON value.
+    ///
+    /// Convenience helper for tools that consume another tool's
+    /// [`ToolOutput::json`] result and need the typed value back.
+    /// Prefers [`ContentBlock::Json`]; falls back to parsing the first
+    /// [`ContentBlock::Text`] as JSON.
+    pub fn as_json(&self) -> Option<Value> {
+        for c in &self.content {
+            if let ContentBlock::Json { value } = c {
+                return Some(value.clone());
+            }
+        }
+        let text = self.as_text()?;
+        serde_json::from_str(text).ok()
+    }
 
-/// A single content block in a tool result.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", content = "data")]
-pub enum ToolContent {
-    #[serde(rename = "text")]
-    /// Plain text content.
-    Text(String),
-    /// Structured JSON content.
-    #[serde(rename = "json")]
-    Json(Value),
+    /// Convert this output into a wire-format
+    /// [`primitives::ToolResult`](motosan_agent_primitives::ToolResult).
+    ///
+    /// Strips engine-side metadata (`citation`, `inject_to_context`,
+    /// `duration_ms`); the engine reads those off the original
+    /// `ToolOutput` separately before discarding them.
+    pub fn into_tool_result(self, tool_use_id: impl Into<String>) -> ToolResult {
+        ToolResult {
+            tool_use_id: tool_use_id.into(),
+            content: self.content,
+            is_error: self.is_error,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +337,16 @@ pub enum ToolContent {
 /// Execution context passed to every tool call.
 ///
 /// Contains common fields shared across platforms, plus an `extra` map for
-/// platform-specific data (crucible: org_id, project_id; chat: group_id, etc.).
+/// platform-specific data (crucible: org_id, project_id; chat: group_id,
+/// etc.) and a [`CancellationToken`] the engine uses to abort the call.
+///
+/// # Serialization caveat
+///
+/// [`CancellationToken`] is not serializable. The `cancellation_token`
+/// field uses `#[serde(skip, default)]` so the rest of the struct still
+/// round-trips for backward compatibility with persisted 0.3.x contexts.
+/// A `ToolContext` recovered from JSON will have a **fresh, never-cancelled**
+/// token; never rely on round-tripping cancellation state through serde.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ToolContext {
     /// Who is calling the tool (agent_id or user_id).
@@ -265,15 +358,28 @@ pub struct ToolContext {
     pub cwd: Option<std::path::PathBuf>,
     /// Platform-specific key-value extensions.
     pub extra: HashMap<String, Value>,
+    /// Cancellation signal. The engine cancels this token when the user
+    /// aborts, the request times out, or a hook returns `Abort`.
+    ///
+    /// Long-running tools (shell, browser, network) should poll
+    /// [`ToolContext::is_cancelled`] periodically or pass the token into
+    /// any cancellable subsystem. Short / pure-compute tools may ignore it.
+    ///
+    /// `#[serde(skip)]` — deserialized contexts get a fresh, never-cancelled
+    /// token.
+    #[serde(skip, default)]
+    pub cancellation_token: CancellationToken,
 }
 
 impl ToolContext {
+    /// Build a new context with the required identity fields.
     pub fn new(caller_id: impl Into<String>, platform: impl Into<String>) -> Self {
         Self {
             caller_id: caller_id.into(),
             platform: platform.into(),
             cwd: None,
             extra: HashMap::new(),
+            cancellation_token: CancellationToken::new(),
         }
     }
 
@@ -287,6 +393,17 @@ impl ToolContext {
     pub fn with(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
         self.extra.insert(key.into(), value.into());
         self
+    }
+
+    /// Attach an engine-provided cancellation token (builder pattern).
+    pub fn with_cancellation(mut self, token: CancellationToken) -> Self {
+        self.cancellation_token = token;
+        self
+    }
+
+    /// `true` if the engine has cancelled this tool call.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation_token.is_cancelled()
     }
 
     /// Get a string value from extra.
@@ -314,6 +431,7 @@ mod tests {
     use super::*;
     use serde::Deserialize;
     use serde_json::json;
+    use std::sync::Arc;
 
     #[derive(Debug, Deserialize)]
     struct SearchArgs {
@@ -335,6 +453,8 @@ mod tests {
             }),
         }
     }
+
+    // -- ToolDef tests (unchanged behaviour from 0.3.x) --
 
     #[test]
     fn validate_input_schema_accepts_valid() {
@@ -402,22 +522,49 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_text_roundtrip() {
-        let r = ToolResult::text("hello");
+    fn serde_roundtrip_tool_def() {
+        let def = search_def();
+        let json = serde_json::to_string(&def).unwrap();
+        let back: ToolDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(def, back);
+    }
+
+    // -- ToolOutput tests (replaces 0.3.x ToolResult tests) --
+
+    #[test]
+    fn tool_output_text_roundtrip() {
+        let r = ToolOutput::text("hello");
         assert!(!r.is_error);
         assert_eq!(r.as_text(), Some("hello"));
         assert!(r.citation.is_none());
     }
 
     #[test]
-    fn tool_result_error_sets_flag() {
-        let r = ToolResult::error("boom");
+    fn tool_output_error_sets_flag() {
+        let r = ToolOutput::error("boom");
         assert!(r.is_error);
+        assert_eq!(r.as_text(), Some("boom"));
     }
 
     #[test]
-    fn tool_result_builder_chain() {
-        let r = ToolResult::text("data")
+    fn tool_output_json_uses_json_content_block() {
+        let r = ToolOutput::json(json!({ "rate": 31.5 }));
+        assert!(!r.is_error);
+        // JSON should round-trip through as_json()
+        let parsed = r.as_json().expect("as_json");
+        assert_eq!(parsed["rate"], 31.5);
+        // ...and the underlying block is a structured Json variant
+        match &r.content[0] {
+            ContentBlock::Json { value } => {
+                assert_eq!(value["rate"], 31.5);
+            }
+            _ => panic!("expected Json block"),
+        }
+    }
+
+    #[test]
+    fn tool_output_builder_chain() {
+        let r = ToolOutput::text("data")
             .with_citation("https://example.com")
             .with_inject(true)
             .with_duration(42);
@@ -427,46 +574,29 @@ mod tests {
     }
 
     #[test]
-    fn serde_roundtrip_tool_def() {
-        let def = search_def();
-        let json = serde_json::to_string(&def).unwrap();
-        let back: ToolDef = serde_json::from_str(&json).unwrap();
-        assert_eq!(def, back);
+    fn tool_output_into_tool_result_strips_metadata() {
+        let out = ToolOutput::text("hi")
+            .with_citation("https://x")
+            .with_duration(7);
+        let wire = out.into_tool_result("call_42");
+        assert_eq!(wire.tool_use_id, "call_42");
+        assert!(!wire.is_error);
+        assert_eq!(wire.content.len(), 1);
+        match &wire.content[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "hi"),
+            _ => panic!("expected Text"),
+        }
+        // Engine-side metadata not on the wire type
+        // (compile-time check: ToolResult only has tool_use_id / content / is_error)
     }
 
     #[test]
-    fn serde_roundtrip_tool_result() {
-        let r = ToolResult::text("hello")
-            .with_citation("https://example.com")
-            .with_duration(42);
-        let json = serde_json::to_string(&r).unwrap();
-        let back: ToolResult = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.as_text(), Some("hello"));
-        assert_eq!(back.citation.as_deref(), Some("https://example.com"));
-        assert_eq!(back.duration_ms, Some(42));
+    fn tool_output_into_tool_result_preserves_error_flag() {
+        let wire = ToolOutput::error("boom").into_tool_result("call_1");
+        assert!(wire.is_error);
     }
 
-    #[test]
-    fn serde_roundtrip_tool_content() {
-        let text = ToolContent::Text("hi".into());
-        let json_val = ToolContent::Json(json!({"key": "value"}));
-
-        let text_json = serde_json::to_string(&text).unwrap();
-        let back: ToolContent = serde_json::from_str(&text_json).unwrap();
-        assert_eq!(text, back);
-
-        let json_json = serde_json::to_string(&json_val).unwrap();
-        let back: ToolContent = serde_json::from_str(&json_json).unwrap();
-        assert_eq!(json_val, back);
-    }
-
-    #[test]
-    fn serde_tool_content_tagged_format() {
-        let text = ToolContent::Text("hi".into());
-        let serialized: Value = serde_json::to_value(&text).unwrap();
-        assert_eq!(serialized["type"], "text");
-        assert_eq!(serialized["data"], "hi");
-    }
+    // -- ToolContext tests --
 
     #[test]
     fn serde_roundtrip_tool_context() {
@@ -514,5 +644,72 @@ mod tests {
         let json = r#"{"caller_id":"agent-1","platform":"crucible","extra":{}}"#;
         let ctx: ToolContext = serde_json::from_str(json).unwrap();
         assert!(ctx.cwd.is_none());
+        // The cancellation token field is also skipped — should deserialize
+        // to a fresh, never-cancelled token.
+        assert!(!ctx.is_cancelled());
+    }
+
+    #[test]
+    fn tool_context_cancellation_token_is_skipped_in_serde() {
+        let ctx = ToolContext::new("a", "p");
+        ctx.cancellation_token.cancel();
+        assert!(ctx.is_cancelled());
+
+        let s = serde_json::to_string(&ctx).unwrap();
+        // The serialized form must not mention the token field.
+        assert!(!s.contains("cancellation_token"));
+        // Round-tripping discards the cancellation state — by design.
+        let back: ToolContext = serde_json::from_str(&s).unwrap();
+        assert!(!back.is_cancelled());
+    }
+
+    #[test]
+    fn tool_context_with_cancellation_attaches_token() {
+        let token = CancellationToken::new();
+        let ctx = ToolContext::new("a", "p").with_cancellation(token.clone());
+        assert!(!ctx.is_cancelled());
+        token.cancel();
+        assert!(ctx.is_cancelled());
+    }
+
+    // -- Object safety smoke test for `Arc<dyn Tool>` --
+
+    struct StubTool;
+
+    #[async_trait]
+    impl Tool for StubTool {
+        fn def(&self) -> ToolDef {
+            ToolDef {
+                name: "stub".into(),
+                description: "stub".into(),
+                input_schema: json!({ "type": "object", "properties": {} }),
+            }
+        }
+
+        fn annotations(&self) -> ToolAnnotations {
+            ToolAnnotations {
+                read_only: true,
+                destructive: false,
+                network_access: false,
+                idempotent: true,
+            }
+        }
+
+        async fn call(&self, _args: Value, _ctx: &ToolContext) -> ToolOutput {
+            ToolOutput::text("stub ok")
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_trait_is_object_safe_and_annotations_reachable() {
+        let t: Arc<dyn Tool> = Arc::new(StubTool);
+        // Reach `annotations()` through the trait object.
+        let ann = t.annotations();
+        assert!(ann.read_only);
+        assert!(!ann.destructive);
+        // Reach `call()` through the trait object.
+        let ctx = ToolContext::new("a", "p");
+        let out = t.call(json!({}), &ctx).await;
+        assert_eq!(out.as_text(), Some("stub ok"));
     }
 }

@@ -1,10 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 const DEFAULT_MAX_CHARS: usize = 50_000;
 const MAX_PDF_BYTES: usize = 50 * 1_048_576; // 50 MB
@@ -189,6 +187,7 @@ fn truncate_text(text: &str, max_chars: usize) -> (String, bool) {
     )
 }
 
+#[async_trait]
 impl Tool for ReadPdfTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -215,65 +214,68 @@ impl Tool for ReadPdfTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            network_access: false,
+            idempotent: true,
+        }
+    }
+
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         let cwd = ctx.cwd.clone();
-        Box::pin(async move {
-            let mut input: ReadPdfInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
 
-            if input.max_chars == 0 {
-                input.max_chars = DEFAULT_MAX_CHARS;
+        let mut input: ReadPdfInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
+
+        if input.max_chars == 0 {
+            input.max_chars = DEFAULT_MAX_CHARS;
+        }
+
+        let is_url = input.source.starts_with("http://") || input.source.starts_with("https://");
+
+        let bytes = if is_url {
+            match Self::download_pdf(&input.source).await {
+                Ok(b) => b,
+                Err(e) => return ToolOutput::error(e),
             }
-
-            let is_url =
-                input.source.starts_with("http://") || input.source.starts_with("https://");
-
-            let bytes = if is_url {
-                match Self::download_pdf(&input.source).await {
-                    Ok(b) => b,
-                    Err(e) => return ToolResult::error(e),
-                }
+        } else {
+            let resolved = if std::path::Path::new(&input.source).is_absolute() {
+                input.source.clone()
+            } else if let Some(base) = &cwd {
+                base.join(&input.source).to_string_lossy().into_owned()
             } else {
-                let resolved = if std::path::Path::new(&input.source).is_absolute() {
-                    input.source.clone()
-                } else if let Some(base) = &cwd {
-                    base.join(&input.source).to_string_lossy().into_owned()
-                } else {
-                    input.source.clone()
-                };
-                match Self::read_local_pdf(&resolved) {
-                    Ok(b) => b,
-                    Err(e) => return ToolResult::error(e),
-                }
+                input.source.clone()
             };
-
-            let (text, num_pages) = match extract_text_from_pdf(&bytes) {
-                Ok(r) => r,
-                Err(e) => return ToolResult::error(e),
-            };
-
-            let (content, truncated) = truncate_text(&text, input.max_chars);
-
-            let summary = format!(
-                "PDF: {} pages, {} chars{}\n\n{}",
-                num_pages,
-                text.len(),
-                if truncated { " (truncated)" } else { "" },
-                content
-            );
-
-            let mut result = ToolResult::text(summary);
-            if is_url {
-                result = result.with_citation(input.source);
+            match Self::read_local_pdf(&resolved) {
+                Ok(b) => b,
+                Err(e) => return ToolOutput::error(e),
             }
-            result
-        })
+        };
+
+        let (text, num_pages) = match extract_text_from_pdf(&bytes) {
+            Ok(r) => r,
+            Err(e) => return ToolOutput::error(e),
+        };
+
+        let (content, truncated) = truncate_text(&text, input.max_chars);
+
+        let summary = format!(
+            "PDF: {} pages, {} chars{}\n\n{}",
+            num_pages,
+            text.len(),
+            if truncated { " (truncated)" } else { "" },
+            content
+        );
+
+        let mut result = ToolOutput::text(summary);
+        if is_url {
+            result = result.with_citation(input.source);
+        }
+        result
     }
 }
 

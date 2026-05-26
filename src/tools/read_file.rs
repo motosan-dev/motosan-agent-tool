@@ -1,10 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// A tool that reads local files from disk.
 ///
@@ -30,6 +28,7 @@ impl ReadFileTool {
     }
 }
 
+#[async_trait]
 impl Tool for ReadFileTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -54,76 +53,80 @@ impl Tool for ReadFileTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            network_access: false,
+            idempotent: true,
+        }
+    }
+
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         let cwd = ctx.cwd.clone();
-        Box::pin(async move {
-            let input: ReadFileInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
 
-            // Path traversal protection.
-            if input.path.contains("..") {
-                return ToolResult::error(
-                    "Path traversal detected: paths containing '..' are not allowed",
-                );
-            }
+        let input: ReadFileInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            let resolved = if std::path::Path::new(&input.path).is_absolute() {
-                std::path::PathBuf::from(&input.path)
-            } else if let Some(base) = &cwd {
-                base.join(&input.path)
-            } else {
-                std::path::PathBuf::from(&input.path)
-            };
-            let path = resolved.as_path();
-            if !path.exists() {
-                return ToolResult::error(format!("File not found: {}", input.path));
-            }
-            if !path.is_file() {
-                return ToolResult::error(format!("Not a file: {}", input.path));
-            }
+        // Path traversal protection.
+        if input.path.contains("..") {
+            return ToolOutput::error(
+                "Path traversal detected: paths containing '..' are not allowed",
+            );
+        }
 
-            let content = match std::fs::read_to_string(path) {
-                Ok(c) => c,
-                Err(e) => {
-                    // Check if it's likely a binary file (invalid UTF-8).
-                    if e.kind() == std::io::ErrorKind::InvalidData {
-                        return ToolResult::error(
-                            "File appears to be binary. Only UTF-8 text files are supported.",
-                        );
-                    }
-                    return ToolResult::error(format!("Failed to read file: {e}"));
+        let resolved = if std::path::Path::new(&input.path).is_absolute() {
+            std::path::PathBuf::from(&input.path)
+        } else if let Some(base) = &cwd {
+            base.join(&input.path)
+        } else {
+            std::path::PathBuf::from(&input.path)
+        };
+        let path = resolved.as_path();
+        if !path.exists() {
+            return ToolOutput::error(format!("File not found: {}", input.path));
+        }
+        if !path.is_file() {
+            return ToolOutput::error(format!("Not a file: {}", input.path));
+        }
+
+        let content = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                // Check if it's likely a binary file (invalid UTF-8).
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    return ToolOutput::error(
+                        "File appears to be binary. Only UTF-8 text files are supported.",
+                    );
                 }
-            };
+                return ToolOutput::error(format!("Failed to read file: {e}"));
+            }
+        };
 
-            let content = if let Some(max) = input.max_chars {
-                if content.len() > max {
-                    let safe_boundary = content
-                        .char_indices()
-                        .map(|(idx, _)| idx)
-                        .take_while(|&idx| idx <= max)
-                        .last()
-                        .unwrap_or(0);
-                    format!(
-                        "{}\n\n[... truncated at {} chars, total {} chars]",
-                        &content[..safe_boundary],
-                        max,
-                        content.len()
-                    )
-                } else {
-                    content
-                }
+        let content = if let Some(max) = input.max_chars {
+            if content.len() > max {
+                let safe_boundary = content
+                    .char_indices()
+                    .map(|(idx, _)| idx)
+                    .take_while(|&idx| idx <= max)
+                    .last()
+                    .unwrap_or(0);
+                format!(
+                    "{}\n\n[... truncated at {} chars, total {} chars]",
+                    &content[..safe_boundary],
+                    max,
+                    content.len()
+                )
             } else {
                 content
-            };
+            }
+        } else {
+            content
+        };
 
-            ToolResult::text(content)
-        })
+        ToolOutput::text(content)
     }
 }
 

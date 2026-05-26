@@ -3,7 +3,7 @@
 //! This module provides the common binary name constant and error helper
 //! used by all `browser_*` tools, eliminating duplication across 7 files.
 
-use crate::{ToolContext, ToolResult};
+use crate::{ToolContext, ToolOutput};
 
 /// The name of the external browser automation binary.
 pub const BINARY: &str = "agent-browser";
@@ -41,12 +41,12 @@ pub fn browser_session(ctx: &ToolContext) -> Option<String> {
 
 /// Validate that a URL starts with an allowed scheme (`http://`, `https://`, or `file://`).
 ///
-/// Returns `Ok(())` if valid, or an error `ToolResult` if not.
-pub fn validate_url(url: &str) -> Result<(), ToolResult> {
+/// Returns `Ok(())` if valid, or an error `ToolOutput` if not.
+pub fn validate_url(url: &str) -> Result<(), ToolOutput> {
     if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("file://") {
         Ok(())
     } else {
-        Err(ToolResult::error(format!(
+        Err(ToolOutput::error(format!(
             "Invalid URL: '{url}'. URL must start with http://, https://, or file://"
         )))
     }

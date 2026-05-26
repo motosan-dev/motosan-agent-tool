@@ -1,14 +1,13 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 const PRIMARY_API: &str = "https://open.er-api.com/v6/latest";
 const FALLBACK_API: &str = "https://api.exchangerate-api.com/v4/latest";
@@ -157,6 +156,7 @@ impl CurrencyConvertTool {
     }
 }
 
+#[async_trait]
 impl Tool for CurrencyConvertTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -186,79 +186,81 @@ impl Tool for CurrencyConvertTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        let ctx = ctx.clone();
-        Box::pin(async move {
-            let start = std::time::Instant::now();
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            network_access: true,
+            idempotent: false,
+        }
+    }
 
-            let input: CurrencyConvertInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+        let start = std::time::Instant::now();
 
-            let base = input.from.trim().to_uppercase();
-            let targets: Vec<String> = input
-                .to
-                .split(',')
-                .map(|s| s.trim().to_uppercase())
-                .filter(|s| !s.is_empty())
-                .collect();
+        let input: CurrencyConvertInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            if targets.is_empty() {
-                return ToolResult::error("No target currency specified in 'to' field.");
+        let base = input.from.trim().to_uppercase();
+        let targets: Vec<String> = input
+            .to
+            .split(',')
+            .map(|s| s.trim().to_uppercase())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if targets.is_empty() {
+            return ToolOutput::error("No target currency specified in 'to' field.");
+        }
+
+        let api_key = self.resolve_api_key(ctx);
+
+        // Try cache first
+        let (rates, source) = if let Some(cached) = self.get_cached(&base) {
+            (cached, "cache".to_string())
+        } else {
+            match self.fetch_rates(&base, api_key.as_deref()).await {
+                Ok((rates, source)) => {
+                    self.set_cached(&base, rates.clone());
+                    (rates, source)
+                }
+                Err(e) => return ToolOutput::error(e),
             }
+        };
 
-            let api_key = self.resolve_api_key(&ctx);
-
-            // Try cache first
-            let (rates, source) = if let Some(cached) = self.get_cached(&base) {
-                (cached, "cache".to_string())
-            } else {
-                match self.fetch_rates(&base, api_key.as_deref()).await {
-                    Ok((rates, source)) => {
-                        self.set_cached(&base, rates.clone());
-                        (rates, source)
-                    }
-                    Err(e) => return ToolResult::error(e),
+        // Build results
+        let mut results: Vec<ConversionResult> = Vec::with_capacity(targets.len());
+        for target in &targets {
+            let rate = match rates.get(target.as_str()) {
+                Some(&r) => r,
+                None => {
+                    return ToolOutput::error(format!(
+                        "Unknown currency code: {target}. \
+                         Could not find rate for {base} -> {target}."
+                    ));
                 }
             };
+            results.push(ConversionResult {
+                from: base.clone(),
+                to: target.clone(),
+                amount: input.amount,
+                rate,
+                result: (input.amount * rate * 100.0).round() / 100.0,
+                source: source.clone(),
+            });
+        }
 
-            // Build results
-            let mut results: Vec<ConversionResult> = Vec::with_capacity(targets.len());
-            for target in &targets {
-                let rate = match rates.get(target.as_str()) {
-                    Some(&r) => r,
-                    None => {
-                        return ToolResult::error(format!(
-                            "Unknown currency code: {target}. \
-                             Could not find rate for {base} -> {target}."
-                        ));
-                    }
-                };
-                results.push(ConversionResult {
-                    from: base.clone(),
-                    to: target.clone(),
-                    amount: input.amount,
-                    rate,
-                    result: (input.amount * rate * 100.0).round() / 100.0,
-                    source: source.clone(),
-                });
-            }
+        let duration = start.elapsed().as_millis() as u64;
 
-            let duration = start.elapsed().as_millis() as u64;
+        let output = if results.len() == 1 {
+            serde_json::to_value(&results[0]).unwrap_or(json!(null))
+        } else {
+            serde_json::to_value(&results).unwrap_or(json!(null))
+        };
 
-            let output = if results.len() == 1 {
-                serde_json::to_value(&results[0]).unwrap_or(json!(null))
-            } else {
-                serde_json::to_value(&results).unwrap_or(json!(null))
-            };
-
-            ToolResult::json(output).with_duration(duration)
-        })
+        ToolOutput::json(output).with_duration(duration)
     }
 }
 
@@ -341,7 +343,7 @@ mod tests {
         assert!(!result.is_error);
         let content = &result.content[0];
         let json_val = match content {
-            crate::ToolContent::Json(v) => v,
+            motosan_agent_primitives::ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
 
@@ -362,7 +364,7 @@ mod tests {
 
         assert!(!result.is_error);
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            motosan_agent_primitives::ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
 
@@ -383,7 +385,7 @@ mod tests {
         let result = tool.call(input, &ctx).await;
         assert!(!result.is_error);
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            motosan_agent_primitives::ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
         assert_eq!(json_val["source"], "cache");
@@ -394,7 +396,7 @@ mod tests {
         let result2 = tool.call(input2, &ctx).await;
         assert!(!result2.is_error);
         let json_val2 = match &result2.content[0] {
-            crate::ToolContent::Json(v) => v,
+            motosan_agent_primitives::ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
         assert_eq!(json_val2["source"], "cache");
@@ -422,7 +424,7 @@ mod tests {
 
         assert!(!result.is_error);
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            motosan_agent_primitives::ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
         assert_eq!(json_val["amount"], 1.0);
@@ -438,7 +440,7 @@ mod tests {
 
         assert!(!result.is_error);
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            motosan_agent_primitives::ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
         assert_eq!(json_val["from"], "USD");

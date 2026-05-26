@@ -1,11 +1,10 @@
-use std::future::Future;
 use std::io::Cursor;
-use std::pin::Pin;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 const DEFAULT_MAX_ROWS: usize = 500;
 
@@ -42,6 +41,7 @@ impl ReadSpreadsheetTool {
     }
 }
 
+#[async_trait]
 impl Tool for ReadSpreadsheetTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -72,54 +72,58 @@ impl Tool for ReadSpreadsheetTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            network_access: false,
+            idempotent: true,
+        }
+    }
+
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         let cwd = ctx.cwd.clone();
-        Box::pin(async move {
-            let input: ReadSpreadsheetInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
 
-            let max_rows = input.max_rows.unwrap_or(DEFAULT_MAX_ROWS);
-            let path_lower = input.path.to_lowercase();
+        let input: ReadSpreadsheetInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            let resolved_path = if std::path::Path::new(&input.path).is_absolute() {
-                std::path::PathBuf::from(&input.path)
-            } else if let Some(base) = &cwd {
-                base.join(&input.path)
-            } else {
-                std::path::PathBuf::from(&input.path)
-            };
-            let resolved_str = resolved_path.to_string_lossy();
+        let max_rows = input.max_rows.unwrap_or(DEFAULT_MAX_ROWS);
+        let path_lower = input.path.to_lowercase();
 
-            // Read file bytes.
-            let bytes = match std::fs::read(&resolved_path) {
-                Ok(b) => b,
-                Err(e) => return ToolResult::error(format!("Failed to read file: {e}")),
-            };
+        let resolved_path = if std::path::Path::new(&input.path).is_absolute() {
+            std::path::PathBuf::from(&input.path)
+        } else if let Some(base) = &cwd {
+            base.join(&input.path)
+        } else {
+            std::path::PathBuf::from(&input.path)
+        };
+        let resolved_str = resolved_path.to_string_lossy();
 
-            let result = if path_lower.ends_with(".csv") {
-                parse_csv(&bytes, max_rows, &resolved_str)
-            } else if path_lower.ends_with(".xlsx") {
-                parse_xlsx(&bytes, input.sheet.as_deref(), max_rows, &resolved_str)
-            } else if path_lower.ends_with(".xls") {
-                parse_xls(&bytes, input.sheet.as_deref(), max_rows, &resolved_str)
-            } else {
-                Err("Unsupported file format. Supported formats: .xlsx, .xls, .csv".to_string())
-            };
+        // Read file bytes.
+        let bytes = match std::fs::read(&resolved_path) {
+            Ok(b) => b,
+            Err(e) => return ToolOutput::error(format!("Failed to read file: {e}")),
+        };
 
-            match result {
-                Ok(output) => match serde_json::to_value(output) {
-                    Ok(v) => ToolResult::json(v),
-                    Err(e) => ToolResult::error(format!("Failed to serialize output: {e}")),
-                },
-                Err(e) => ToolResult::error(e),
-            }
-        })
+        let result = if path_lower.ends_with(".csv") {
+            parse_csv(&bytes, max_rows, &resolved_str)
+        } else if path_lower.ends_with(".xlsx") {
+            parse_xlsx(&bytes, input.sheet.as_deref(), max_rows, &resolved_str)
+        } else if path_lower.ends_with(".xls") {
+            parse_xls(&bytes, input.sheet.as_deref(), max_rows, &resolved_str)
+        } else {
+            Err("Unsupported file format. Supported formats: .xlsx, .xls, .csv".to_string())
+        };
+
+        match result {
+            Ok(output) => match serde_json::to_value(output) {
+                Ok(v) => ToolOutput::json(v),
+                Err(e) => ToolOutput::error(format!("Failed to serialize output: {e}")),
+            },
+            Err(e) => ToolOutput::error(e),
+        }
     }
 }
 
@@ -469,14 +473,9 @@ mod tests {
         let result = tool.call(input, &ctx).await;
 
         assert!(!result.is_error, "Expected success but got: {:?}", result);
-        let json_content = result.content.first().unwrap();
-        match json_content {
-            crate::ToolContent::Json(v) => {
-                assert_eq!(v["row_count"], 2);
-                assert_eq!(v["rows"][0]["name"], "Alice");
-            }
-            _ => panic!("Expected JSON content"),
-        }
+        let v = result.as_json().expect("Expected JSON content");
+        assert_eq!(v["row_count"], 2);
+        assert_eq!(v["rows"][0]["name"], "Alice");
     }
 
     #[test]

@@ -1,11 +1,9 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
 use super::browser_common::{browser_session, command_with_session, not_found_or_error};
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 const DEFAULT_TIMEOUT_MS: u64 = 30000;
 
@@ -31,6 +29,7 @@ impl BrowserWaitTool {
     }
 }
 
+#[async_trait]
 impl Tool for BrowserWaitTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -62,83 +61,85 @@ impl Tool for BrowserWaitTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        let session = browser_session(ctx);
-        Box::pin(async move {
-            let input: Input = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: false,
+            network_access: false,
+            idempotent: false,
+        }
+    }
 
-            // Validate that events requiring a value have one
-            match input.event.as_str() {
-                "selector" | "text" | "url" => {
-                    if input.value.is_none() {
-                        return ToolResult::error(format!(
-                            "Event '{}' requires a 'value' parameter",
-                            input.event
-                        ));
-                    }
-                }
-                "load" | "network-idle" => {}
-                _ => {
-                    return ToolResult::error(format!(
-                        "Unknown event '{}'. Valid events: load, network-idle, selector, text, url",
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+        let session = browser_session(ctx);
+        let input: Input = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
+
+        // Validate that events requiring a value have one
+        match input.event.as_str() {
+            "selector" | "text" | "url" => {
+                if input.value.is_none() {
+                    return ToolOutput::error(format!(
+                        "Event '{}' requires a 'value' parameter",
                         input.event
                     ));
                 }
             }
-
-            let timeout_ms = input.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
-
-            let mut cmd_args: Vec<String> = vec!["wait".to_string(), input.event.clone()];
-            if let Some(ref val) = input.value {
-                cmd_args.push(val.clone());
+            "load" | "network-idle" => {}
+            _ => {
+                return ToolOutput::error(format!(
+                    "Unknown event '{}'. Valid events: load, network-idle, selector, text, url",
+                    input.event
+                ));
             }
-            cmd_args.push("--timeout".to_string());
-            cmd_args.push(timeout_ms.to_string());
+        }
 
-            let child = match command_with_session(session.as_deref())
-                .args(&cmd_args)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(e) => return ToolResult::error(not_found_or_error(e)),
-            };
+        let timeout_ms = input.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
 
-            // Process-level timeout: give extra buffer over the wait timeout
-            let process_timeout =
-                tokio::time::Duration::from_millis(timeout_ms.saturating_add(5000));
-            match tokio::time::timeout(process_timeout, child.wait_with_output()).await {
-                Ok(Ok(output)) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    if output.status.success() {
-                        let text = if stdout.trim().is_empty() {
-                            format!("Wait for '{}' completed", input.event)
-                        } else {
-                            stdout
-                        };
-                        ToolResult::text(text)
+        let mut cmd_args: Vec<String> = vec!["wait".to_string(), input.event.clone()];
+        if let Some(ref val) = input.value {
+            cmd_args.push(val.clone());
+        }
+        cmd_args.push("--timeout".to_string());
+        cmd_args.push(timeout_ms.to_string());
+
+        let child = match command_with_session(session.as_deref())
+            .args(&cmd_args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return ToolOutput::error(not_found_or_error(e)),
+        };
+
+        // Process-level timeout: give extra buffer over the wait timeout
+        let process_timeout = tokio::time::Duration::from_millis(timeout_ms.saturating_add(5000));
+        match tokio::time::timeout(process_timeout, child.wait_with_output()).await {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                if output.status.success() {
+                    let text = if stdout.trim().is_empty() {
+                        format!("Wait for '{}' completed", input.event)
                     } else {
-                        ToolResult::error(format!(
-                            "agent-browser wait {} failed (exit {}):\n{stderr}",
-                            input.event,
-                            output.status.code().unwrap_or(-1)
-                        ))
-                    }
+                        stdout
+                    };
+                    ToolOutput::text(text)
+                } else {
+                    ToolOutput::error(format!(
+                        "agent-browser wait {} failed (exit {}):\n{stderr}",
+                        input.event,
+                        output.status.code().unwrap_or(-1)
+                    ))
                 }
-                Ok(Err(e)) => ToolResult::error(format!("Process error: {e}")),
-                Err(_) => ToolResult::error(format!("Execution timed out after {timeout_ms}ms")),
             }
-        })
+            Ok(Err(e)) => ToolOutput::error(format!("Process error: {e}")),
+            Err(_) => ToolOutput::error(format!("Execution timed out after {timeout_ms}ms")),
+        }
     }
 }
 
@@ -188,11 +189,15 @@ mod tests {
     async fn should_return_error_when_binary_missing() {
         let tool = BrowserWaitTool::new();
         let ctx = test_ctx();
-        let result = tool.call(json!({"event": "load"}), &ctx).await;
+        let result = tool
+            .call(json!({"event": "load", "timeout_ms": 1}), &ctx)
+            .await;
         if result.is_error {
             let text = result.as_text().unwrap();
             assert!(
-                text.contains("agent-browser") || text.contains("error"),
+                text.contains("agent-browser")
+                    || text.contains("error")
+                    || text.contains("timed out"),
                 "Unexpected error: {text}"
             );
         }

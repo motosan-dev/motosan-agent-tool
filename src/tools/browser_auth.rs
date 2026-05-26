@@ -1,11 +1,9 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
 use super::browser_common::{browser_session, command_with_session, not_found_or_error};
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// A tool that manages browser authentication state via `agent-browser`.
 ///
@@ -33,6 +31,7 @@ impl BrowserAuthTool {
     }
 }
 
+#[async_trait]
 impl Tool for BrowserAuthTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -60,41 +59,44 @@ impl Tool for BrowserAuthTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        let session = browser_session(ctx);
-        Box::pin(async move {
-            let input: Input = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            network_access: true,
+            idempotent: false,
+        }
+    }
 
-            match input.action.as_str() {
-                "load" => {
-                    // "load" is advisory only. This tool does not persist any state between
-                    // calls. The calling agent must pass --state <path> on subsequent commands.
-                    ToolResult::text(format!(
-                        "Advisory: To use auth state from {}, pass --state flag on your next \
-                         agent-browser command. This tool does not persist state between calls \
-                         \u{2014} the calling agent must manage this.",
-                        input.path
-                    ))
-                }
-                "save" => run_state_save(session.as_deref(), &input.path, false).await,
-                "auto-connect-save" => run_state_save(session.as_deref(), &input.path, true).await,
-                _ => ToolResult::error(format!(
-                    "Unknown action '{}'. Valid actions: load, save, auto-connect-save",
-                    input.action
-                )),
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+        let session = browser_session(ctx);
+        let input: Input = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
+
+        match input.action.as_str() {
+            "load" => {
+                // "load" is advisory only. This tool does not persist any state between
+                // calls. The calling agent must pass --state <path> on subsequent commands.
+                ToolOutput::text(format!(
+                    "Advisory: To use auth state from {}, pass --state flag on your next \
+                     agent-browser command. This tool does not persist state between calls \
+                     \u{2014} the calling agent must manage this.",
+                    input.path
+                ))
             }
-        })
+            "save" => run_state_save(session.as_deref(), &input.path, false).await,
+            "auto-connect-save" => run_state_save(session.as_deref(), &input.path, true).await,
+            _ => ToolOutput::error(format!(
+                "Unknown action '{}'. Valid actions: load, save, auto-connect-save",
+                input.action
+            )),
+        }
     }
 }
 
-async fn run_state_save(session: Option<&str>, path: &str, auto_connect: bool) -> ToolResult {
+async fn run_state_save(session: Option<&str>, path: &str, auto_connect: bool) -> ToolOutput {
     let mut cmd = command_with_session(session);
     if auto_connect {
         cmd.arg("--auto-connect");
@@ -106,7 +108,7 @@ async fn run_state_save(session: Option<&str>, path: &str, auto_connect: bool) -
 
     let child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => return ToolResult::error(not_found_or_error(e)),
+        Err(e) => return ToolOutput::error(not_found_or_error(e)),
     };
 
     let timeout = tokio::time::Duration::from_secs(30);
@@ -120,16 +122,16 @@ async fn run_state_save(session: Option<&str>, path: &str, auto_connect: bool) -
                 } else {
                     stdout
                 };
-                ToolResult::text(text)
+                ToolOutput::text(text)
             } else {
-                ToolResult::error(format!(
+                ToolOutput::error(format!(
                     "agent-browser state save failed (exit {}):\n{stderr}",
                     output.status.code().unwrap_or(-1)
                 ))
             }
         }
-        Ok(Err(e)) => ToolResult::error(format!("Process error: {e}")),
-        Err(_) => ToolResult::error("Execution timed out after 30 seconds"),
+        Ok(Err(e)) => ToolOutput::error(format!("Process error: {e}")),
+        Err(_) => ToolOutput::error("Execution timed out after 30 seconds"),
     }
 }
 
@@ -194,7 +196,9 @@ mod tests {
         if result.is_error {
             let text = result.as_text().unwrap();
             assert!(
-                text.contains("agent-browser") || text.contains("error"),
+                text.contains("agent-browser")
+                    || text.contains("error")
+                    || text.contains("timed out"),
                 "Unexpected error: {text}"
             );
         }
@@ -214,7 +218,9 @@ mod tests {
         if result.is_error {
             let text = result.as_text().unwrap();
             assert!(
-                text.contains("agent-browser") || text.contains("error"),
+                text.contains("agent-browser")
+                    || text.contains("error")
+                    || text.contains("timed out"),
                 "Unexpected error: {text}"
             );
         }

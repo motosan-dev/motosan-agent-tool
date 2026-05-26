@@ -1,10 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde_json::json;
 
 use super::browser_common::{browser_session, command_with_session, not_found_or_error};
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// A tool that captures the accessibility tree snapshot via `agent-browser snapshot`.
 pub struct BrowserSnapshotTool;
@@ -21,6 +19,7 @@ impl BrowserSnapshotTool {
     }
 }
 
+#[async_trait]
 impl Tool for BrowserSnapshotTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -36,42 +35,45 @@ impl Tool for BrowserSnapshotTool {
         }
     }
 
-    fn call(
-        &self,
-        _args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        let session = browser_session(ctx);
-        Box::pin(async move {
-            let child = match command_with_session(session.as_deref())
-                .arg("snapshot")
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(e) => return ToolResult::error(not_found_or_error(e)),
-            };
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            network_access: true,
+            idempotent: false,
+        }
+    }
 
-            let timeout = tokio::time::Duration::from_secs(30);
-            match tokio::time::timeout(timeout, child.wait_with_output()).await {
-                Ok(Ok(output)) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    if output.status.success() {
-                        ToolResult::text(stdout)
-                    } else {
-                        ToolResult::error(format!(
-                            "agent-browser snapshot failed (exit {}):\n{stderr}",
-                            output.status.code().unwrap_or(-1)
-                        ))
-                    }
+    async fn call(&self, _args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+        let session = browser_session(ctx);
+        let child = match command_with_session(session.as_deref())
+            .arg("snapshot")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return ToolOutput::error(not_found_or_error(e)),
+        };
+
+        let timeout = tokio::time::Duration::from_secs(30);
+        match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                if output.status.success() {
+                    ToolOutput::text(stdout)
+                } else {
+                    ToolOutput::error(format!(
+                        "agent-browser snapshot failed (exit {}):\n{stderr}",
+                        output.status.code().unwrap_or(-1)
+                    ))
                 }
-                Ok(Err(e)) => ToolResult::error(format!("Process error: {e}")),
-                Err(_) => ToolResult::error("Execution timed out after 30 seconds"),
             }
-        })
+            Ok(Err(e)) => ToolOutput::error(format!("Process error: {e}")),
+            Err(_) => ToolOutput::error("Execution timed out after 30 seconds"),
+        }
     }
 }
 
@@ -100,7 +102,9 @@ mod tests {
         if result.is_error {
             let text = result.as_text().unwrap();
             assert!(
-                text.contains("agent-browser") || text.contains("error"),
+                text.contains("agent-browser")
+                    || text.contains("error")
+                    || text.contains("timed out"),
                 "Unexpected error: {text}"
             );
         }

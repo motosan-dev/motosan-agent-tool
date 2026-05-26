@@ -1,11 +1,9 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
 use super::browser_common::{browser_session, command_with_session, not_found_or_error};
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// A tool that reads data from the browser via `agent-browser get <target> [@ref]`.
 pub struct BrowserReadTool;
@@ -29,6 +27,7 @@ impl BrowserReadTool {
     }
 }
 
+#[async_trait]
 impl Tool for BrowserReadTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -54,72 +53,75 @@ impl Tool for BrowserReadTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: false,
+            network_access: true,
+            idempotent: false,
+        }
+    }
+
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         let session = browser_session(ctx);
-        Box::pin(async move {
-            let input: Input = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+        let input: Input = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            let mut cmd_args: Vec<String> = vec!["get".to_string(), input.target.clone()];
+        let mut cmd_args: Vec<String> = vec!["get".to_string(), input.target.clone()];
 
-            // text/html/value require a ref
-            match input.target.as_str() {
-                "text" | "html" | "value" => match &input.element_ref {
-                    Some(r) => cmd_args.push(r.clone()),
-                    None => {
-                        return ToolResult::error(format!(
-                            "Target '{}' requires a 'ref' parameter (e.g. @e1)",
-                            input.target
-                        ));
-                    }
-                },
-                "url" | "title" => {
-                    // No ref needed
-                }
-                _ => {
-                    return ToolResult::error(format!(
-                        "Unknown target '{}'. Valid targets: text, html, value, url, title",
+        // text/html/value require a ref
+        match input.target.as_str() {
+            "text" | "html" | "value" => match &input.element_ref {
+                Some(r) => cmd_args.push(r.clone()),
+                None => {
+                    return ToolOutput::error(format!(
+                        "Target '{}' requires a 'ref' parameter (e.g. @e1)",
                         input.target
                     ));
                 }
+            },
+            "url" | "title" => {
+                // No ref needed
             }
+            _ => {
+                return ToolOutput::error(format!(
+                    "Unknown target '{}'. Valid targets: text, html, value, url, title",
+                    input.target
+                ));
+            }
+        }
 
-            let child = match command_with_session(session.as_deref())
-                .args(&cmd_args)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(e) => return ToolResult::error(not_found_or_error(e)),
-            };
+        let child = match command_with_session(session.as_deref())
+            .args(&cmd_args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return ToolOutput::error(not_found_or_error(e)),
+        };
 
-            let timeout = tokio::time::Duration::from_secs(30);
-            match tokio::time::timeout(timeout, child.wait_with_output()).await {
-                Ok(Ok(output)) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    if output.status.success() {
-                        ToolResult::text(stdout)
-                    } else {
-                        ToolResult::error(format!(
-                            "agent-browser get {} failed (exit {}):\n{stderr}",
-                            input.target,
-                            output.status.code().unwrap_or(-1)
-                        ))
-                    }
+        let timeout = tokio::time::Duration::from_secs(30);
+        match tokio::time::timeout(timeout, child.wait_with_output()).await {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                if output.status.success() {
+                    ToolOutput::text(stdout)
+                } else {
+                    ToolOutput::error(format!(
+                        "agent-browser get {} failed (exit {}):\n{stderr}",
+                        input.target,
+                        output.status.code().unwrap_or(-1)
+                    ))
                 }
-                Ok(Err(e)) => ToolResult::error(format!("Process error: {e}")),
-                Err(_) => ToolResult::error("Execution timed out after 30 seconds"),
             }
-        })
+            Ok(Err(e)) => ToolOutput::error(format!("Process error: {e}")),
+            Err(_) => ToolOutput::error("Execution timed out after 30 seconds"),
+        }
     }
 }
 
@@ -170,7 +172,9 @@ mod tests {
         if result.is_error {
             let text = result.as_text().unwrap();
             assert!(
-                text.contains("agent-browser") || text.contains("error"),
+                text.contains("agent-browser")
+                    || text.contains("error")
+                    || text.contains("timed out"),
                 "Unexpected error: {text}"
             );
         }

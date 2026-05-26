@@ -1,12 +1,10 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// A built-in tool for date/time operations.
 ///
@@ -43,6 +41,7 @@ impl DatetimeTool {
     }
 }
 
+#[async_trait]
 impl Tool for DatetimeTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -84,26 +83,29 @@ impl Tool for DatetimeTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        Box::pin(async move {
-            let input: DatetimeInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            network_access: false,
+            idempotent: false,
+        }
+    }
 
-            match input.function.as_str() {
-                "get_current_datetime" => handle_get_current_datetime(&input),
-                "date_add" => handle_date_add(&input),
-                "date_diff" => handle_date_diff(&input),
-                other => ToolResult::error(format!(
-                    "Unknown function: {other}. Expected one of: get_current_datetime, date_add, date_diff"
-                )),
-            }
-        })
+    async fn call(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        let input: DatetimeInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
+
+        match input.function.as_str() {
+            "get_current_datetime" => handle_get_current_datetime(&input),
+            "date_add" => handle_date_add(&input),
+            "date_diff" => handle_date_diff(&input),
+            other => ToolOutput::error(format!(
+                "Unknown function: {other}. Expected one of: get_current_datetime, date_add, date_diff"
+            )),
+        }
     }
 }
 
@@ -111,14 +113,14 @@ impl Tool for DatetimeTool {
 // Handlers
 // ---------------------------------------------------------------------------
 
-fn resolve_tz(tz_str: Option<&str>) -> Result<Tz, ToolResult> {
+fn resolve_tz(tz_str: Option<&str>) -> Result<Tz, ToolOutput> {
     let tz_name = tz_str.unwrap_or("UTC");
     tz_name
         .parse::<Tz>()
-        .map_err(|_| ToolResult::error(format!("Unknown timezone: {tz_name}")))
+        .map_err(|_| ToolOutput::error(format!("Unknown timezone: {tz_name}")))
 }
 
-fn handle_get_current_datetime(input: &DatetimeInput) -> ToolResult {
+fn handle_get_current_datetime(input: &DatetimeInput) -> ToolOutput {
     let tz = match resolve_tz(input.timezone.as_deref()) {
         Ok(tz) => tz,
         Err(r) => return r,
@@ -131,7 +133,7 @@ fn handle_get_current_datetime(input: &DatetimeInput) -> ToolResult {
     let weekday = format!("{}", now.format("%A"));
     let human = format_human_datetime(&now);
 
-    ToolResult::json(json!({
+    ToolOutput::json(json!({
         "iso": iso,
         "date": date,
         "time": time,
@@ -140,7 +142,7 @@ fn handle_get_current_datetime(input: &DatetimeInput) -> ToolResult {
     }))
 }
 
-fn handle_date_add(input: &DatetimeInput) -> ToolResult {
+fn handle_date_add(input: &DatetimeInput) -> ToolOutput {
     let tz = match resolve_tz(input.timezone.as_deref()) {
         Ok(tz) => tz,
         Err(r) => return r,
@@ -148,21 +150,21 @@ fn handle_date_add(input: &DatetimeInput) -> ToolResult {
 
     let date_str = match &input.date {
         Some(d) => d.as_str(),
-        None => return ToolResult::error("date_add requires a \"date\" field (YYYY-MM-DD)"),
+        None => return ToolOutput::error("date_add requires a \"date\" field (YYYY-MM-DD)"),
     };
     let offset_str = match &input.offset {
         Some(o) => o.as_str(),
-        None => return ToolResult::error("date_add requires an \"offset\" field"),
+        None => return ToolOutput::error("date_add requires an \"offset\" field"),
     };
 
     let base = match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(e) => return ToolResult::error(format!("Invalid date \"{date_str}\": {e}")),
+        Err(e) => return ToolOutput::error(format!("Invalid date \"{date_str}\": {e}")),
     };
 
     let result_date = match parse_offset(base, offset_str) {
         Ok(d) => d,
-        Err(msg) => return ToolResult::error(msg),
+        Err(msg) => return ToolOutput::error(msg),
     };
 
     let dt = tz
@@ -170,7 +172,7 @@ fn handle_date_add(input: &DatetimeInput) -> ToolResult {
         .single();
     let dt = match dt {
         Some(d) => d,
-        None => return ToolResult::error("Ambiguous or invalid local datetime for timezone"),
+        None => return ToolOutput::error("Ambiguous or invalid local datetime for timezone"),
     };
 
     let iso = dt.to_rfc3339();
@@ -178,7 +180,7 @@ fn handle_date_add(input: &DatetimeInput) -> ToolResult {
     let weekday = format!("{}", dt.format("%A"));
     let human = format_human_date(&dt);
 
-    ToolResult::json(json!({
+    ToolOutput::json(json!({
         "iso": iso,
         "date": date,
         "weekday": weekday,
@@ -186,23 +188,23 @@ fn handle_date_add(input: &DatetimeInput) -> ToolResult {
     }))
 }
 
-fn handle_date_diff(input: &DatetimeInput) -> ToolResult {
+fn handle_date_diff(input: &DatetimeInput) -> ToolOutput {
     let from_str = match &input.from {
         Some(f) => f.as_str(),
-        None => return ToolResult::error("date_diff requires a \"from\" field (YYYY-MM-DD)"),
+        None => return ToolOutput::error("date_diff requires a \"from\" field (YYYY-MM-DD)"),
     };
     let to_str = match &input.to {
         Some(t) => t.as_str(),
-        None => return ToolResult::error("date_diff requires a \"to\" field (YYYY-MM-DD)"),
+        None => return ToolOutput::error("date_diff requires a \"to\" field (YYYY-MM-DD)"),
     };
 
     let from = match NaiveDate::parse_from_str(from_str, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(e) => return ToolResult::error(format!("Invalid from date \"{from_str}\": {e}")),
+        Err(e) => return ToolOutput::error(format!("Invalid from date \"{from_str}\": {e}")),
     };
     let to = match NaiveDate::parse_from_str(to_str, "%Y-%m-%d") {
         Ok(d) => d,
-        Err(e) => return ToolResult::error(format!("Invalid to date \"{to_str}\": {e}")),
+        Err(e) => return ToolOutput::error(format!("Invalid to date \"{to_str}\": {e}")),
     };
 
     let days = (to - from).num_days();
@@ -211,7 +213,7 @@ fn handle_date_diff(input: &DatetimeInput) -> ToolResult {
     let months = approximate_months(from, to);
     let human = format_human_diff(days);
 
-    ToolResult::json(json!({
+    ToolOutput::json(json!({
         "days": days,
         "weeks": weeks,
         "months": months,
@@ -437,7 +439,7 @@ mod tests {
 
         assert!(!result.is_error);
         let content = &result.content[0];
-        if let crate::ToolContent::Json(v) = content {
+        if let motosan_agent_primitives::ContentBlock::Json { value: v } = content {
             assert!(v["iso"].is_string());
             assert!(v["date"].is_string());
             assert!(v["time"].is_string());
@@ -459,7 +461,7 @@ mod tests {
 
         assert!(!result.is_error);
         let content = &result.content[0];
-        if let crate::ToolContent::Json(v) = content {
+        if let motosan_agent_primitives::ContentBlock::Json { value: v } = content {
             let iso = v["iso"].as_str().unwrap();
             // Asia/Taipei is UTC+8
             assert!(iso.contains("+08:00"));
@@ -481,7 +483,7 @@ mod tests {
 
         assert!(!result.is_error);
         let content = &result.content[0];
-        if let crate::ToolContent::Json(v) = content {
+        if let motosan_agent_primitives::ContentBlock::Json { value: v } = content {
             assert_eq!(v["date"].as_str().unwrap(), "2026-03-18");
             assert_eq!(v["weekday"].as_str().unwrap(), "Wednesday");
         } else {
@@ -502,7 +504,7 @@ mod tests {
 
         assert!(!result.is_error);
         let content = &result.content[0];
-        if let crate::ToolContent::Json(v) = content {
+        if let motosan_agent_primitives::ContentBlock::Json { value: v } = content {
             assert_eq!(v["date"].as_str().unwrap(), "2026-03-31");
         } else {
             panic!("Expected JSON content");
@@ -523,7 +525,7 @@ mod tests {
 
         assert!(!result.is_error);
         let content = &result.content[0];
-        if let crate::ToolContent::Json(v) = content {
+        if let motosan_agent_primitives::ContentBlock::Json { value: v } = content {
             assert_eq!(v["date"].as_str().unwrap(), "2026-03-23");
             assert_eq!(v["weekday"].as_str().unwrap(), "Monday");
         } else {
@@ -544,7 +546,7 @@ mod tests {
 
         assert!(!result.is_error);
         let content = &result.content[0];
-        if let crate::ToolContent::Json(v) = content {
+        if let motosan_agent_primitives::ContentBlock::Json { value: v } = content {
             assert_eq!(v["days"].as_i64().unwrap(), 14);
             assert_eq!(v["weeks"].as_u64().unwrap(), 2);
             assert_eq!(v["months"].as_i64().unwrap(), 0);
@@ -599,7 +601,7 @@ mod tests {
 
         assert!(!result.is_error);
         let content = &result.content[0];
-        if let crate::ToolContent::Json(v) = content {
+        if let motosan_agent_primitives::ContentBlock::Json { value: v } = content {
             // Jan 31 + 1M = Feb 28 (clamped)
             assert_eq!(v["date"].as_str().unwrap(), "2026-02-28");
         } else {

@@ -1,13 +1,12 @@
-use std::future::Future;
 use std::net::ToSocketAddrs;
-use std::pin::Pin;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 const DEFAULT_MAX_CHARS: usize = 5000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -117,6 +116,7 @@ impl FetchUrlTool {
     }
 }
 
+#[async_trait]
 impl Tool for FetchUrlTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -142,106 +142,106 @@ impl Tool for FetchUrlTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        Box::pin(async move {
-            let start = std::time::Instant::now();
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: false,
+            network_access: true,
+            idempotent: false,
+        }
+    }
 
-            let mut input: FetchUrlInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    async fn call(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        let start = std::time::Instant::now();
 
-            if input.max_chars == 0 {
-                input.max_chars = DEFAULT_MAX_CHARS;
-            }
+        let mut input: FetchUrlInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            // Validate URL scheme.
-            if !input.url.starts_with("http://") && !input.url.starts_with("https://") {
-                return ToolResult::error("Invalid URL: must start with http:// or https://");
-            }
+        if input.max_chars == 0 {
+            input.max_chars = DEFAULT_MAX_CHARS;
+        }
 
-            // SSRF protection.
-            if let Err(e) = check_ssrf(&input.url) {
-                return ToolResult::error(e);
-            }
+        // Validate URL scheme.
+        if !input.url.starts_with("http://") && !input.url.starts_with("https://") {
+            return ToolOutput::error("Invalid URL: must start with http:// or https://");
+        }
 
-            let response = match self
-                .http
-                .get(&input.url)
-                .header("User-Agent", "Mozilla/5.0 (compatible; MotosanAgent/1.0)")
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return ToolResult::error(format!("Failed to fetch URL: {e}")),
-            };
+        // SSRF protection.
+        if let Err(e) = check_ssrf(&input.url) {
+            return ToolOutput::error(e);
+        }
 
-            if !response.status().is_success() {
-                let status = response.status();
-                return ToolResult::error(format!(
-                    "HTTP error {status} when fetching {}",
-                    input.url
+        let response = match self
+            .http
+            .get(&input.url)
+            .header("User-Agent", "Mozilla/5.0 (compatible; MotosanAgent/1.0)")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolOutput::error(format!("Failed to fetch URL: {e}")),
+        };
+
+        if !response.status().is_success() {
+            let status = response.status();
+            return ToolOutput::error(format!("HTTP error {status} when fetching {}", input.url));
+        }
+
+        if let Some(cl) = response.content_length() {
+            if cl as usize > MAX_RESPONSE_BYTES {
+                return ToolOutput::error(format!(
+                    "Response too large: {cl} bytes exceeds {MAX_RESPONSE_BYTES} byte limit"
                 ));
             }
+        }
 
-            if let Some(cl) = response.content_length() {
-                if cl as usize > MAX_RESPONSE_BYTES {
-                    return ToolResult::error(format!(
-                        "Response too large: {cl} bytes exceeds {MAX_RESPONSE_BYTES} byte limit"
-                    ));
-                }
-            }
+        let bytes = match response.bytes().await {
+            Ok(b) => b,
+            Err(e) => return ToolOutput::error(format!("Failed to read response body: {e}")),
+        };
+        if bytes.len() > MAX_RESPONSE_BYTES {
+            return ToolOutput::error(format!(
+                "Response too large: {} bytes exceeds {MAX_RESPONSE_BYTES} byte limit",
+                bytes.len()
+            ));
+        }
 
-            let bytes = match response.bytes().await {
-                Ok(b) => b,
-                Err(e) => return ToolResult::error(format!("Failed to read response body: {e}")),
-            };
-            if bytes.len() > MAX_RESPONSE_BYTES {
-                return ToolResult::error(format!(
-                    "Response too large: {} bytes exceeds {MAX_RESPONSE_BYTES} byte limit",
-                    bytes.len()
-                ));
-            }
+        let html = String::from_utf8_lossy(&bytes).into_owned();
 
-            let html = String::from_utf8_lossy(&bytes).into_owned();
+        let title = extract_tag_content(&html, "title")
+            .map(|t| strip_html(&t))
+            .unwrap_or_default();
 
-            let title = extract_tag_content(&html, "title")
-                .map(|t| strip_html(&t))
-                .unwrap_or_default();
+        let mut content = strip_html(&html);
 
-            let mut content = strip_html(&html);
-
-            // UTF-8 safe truncation.
-            if content.len() > input.max_chars {
-                let safe_boundary = content
-                    .char_indices()
-                    .map(|(idx, _)| idx)
-                    .take_while(|&idx| idx <= input.max_chars)
-                    .last()
-                    .unwrap_or(0);
-                if let Some(last_space) = content[..safe_boundary].rfind(' ') {
-                    content = format!("{}...", &content[..last_space]);
-                } else {
-                    content = format!("{}...", &content[..safe_boundary]);
-                }
-            }
-
-            let duration = start.elapsed().as_millis() as u64;
-
-            let text = if title.is_empty() {
-                content
+        // UTF-8 safe truncation.
+        if content.len() > input.max_chars {
+            let safe_boundary = content
+                .char_indices()
+                .map(|(idx, _)| idx)
+                .take_while(|&idx| idx <= input.max_chars)
+                .last()
+                .unwrap_or(0);
+            if let Some(last_space) = content[..safe_boundary].rfind(' ') {
+                content = format!("{}...", &content[..last_space]);
             } else {
-                format!("Title: {title}\n\n{content}")
-            };
+                content = format!("{}...", &content[..safe_boundary]);
+            }
+        }
 
-            ToolResult::text(text)
-                .with_citation(input.url)
-                .with_duration(duration)
-        })
+        let duration = start.elapsed().as_millis() as u64;
+
+        let text = if title.is_empty() {
+            content
+        } else {
+            format!("Title: {title}\n\n{content}")
+        };
+
+        ToolOutput::text(text)
+            .with_citation(input.url)
+            .with_duration(duration)
     }
 }
 

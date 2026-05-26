@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.0 — 2026-05-26
+
+BREAKING:
+- Tool trait uses #[async_trait]; signature changed from manual Pin<Box<Future>> to async fn call(...).
+- Tool::annotations() is now mandatory (no default impl). Tool authors must declare ToolAnnotations explicitly.
+- ToolResult removed from this crate. Use motosan_agent_primitives::ToolResult on the wire and the new ToolOutput type for in-crate tool returns.
+- ToolContent removed. Use motosan_agent_primitives::ContentBlock.
+- ToolContext gained a cancellation_token field (tokio_util::sync::CancellationToken); marked #[serde(skip, default)] for wire-format back-compat.
+
+ADDED:
+- ToolOutput struct with content/is_error/citation/inject_to_context/duration_ms fields and an into_tool_result(tool_use_id) conversion to the primitives wire type.
+- Re-exports from motosan-agent-primitives: ContentBlock, ToolAnnotations, ToolCall, ToolResult.
+
+DEPS:
+- New: motosan-agent-primitives, async-trait, tokio-util.
+
 ## [Unreleased]
 
 ### Added

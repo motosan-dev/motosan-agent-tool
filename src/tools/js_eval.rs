@@ -1,11 +1,10 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 const EXECUTION_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -160,6 +159,7 @@ fn execute_js(code: &str) -> Result<String, String> {
     serde_json::to_string(&json_result).map_err(|e| format!("Failed to serialize result: {e}"))
 }
 
+#[async_trait]
 impl Tool for JsEvalTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -183,40 +183,46 @@ impl Tool for JsEvalTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        Box::pin(async move {
-            let input: JsEvalInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    fn annotations(&self) -> ToolAnnotations {
+        // Arbitrary user-supplied code → conservative: destructive=true.
+        // Boa is pure-Rust so no actual filesystem/network access, but the
+        // computation itself is unconstrained.
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            network_access: false,
+            idempotent: false,
+        }
+    }
 
-            if input.code.trim().is_empty() {
-                return ToolResult::error("Code must not be empty");
+    async fn call(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        let input: JsEvalInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
+
+        if input.code.trim().is_empty() {
+            return ToolOutput::error("Code must not be empty");
+        }
+
+        let code = input.code.clone();
+
+        let handle = tokio::task::spawn_blocking(move || execute_js(&code));
+
+        let result = match tokio::time::timeout(EXECUTION_TIMEOUT, handle).await {
+            Ok(Ok(Ok(output))) => output,
+            Ok(Ok(Err(err))) => return ToolOutput::error(err),
+            Ok(Err(join_err)) => {
+                return ToolOutput::error(format!("JS execution thread panicked: {join_err}"))
             }
+            Err(_) => return ToolOutput::error("JS execution timed out after 5 seconds"),
+        };
 
-            let code = input.code.clone();
-
-            let handle = tokio::task::spawn_blocking(move || execute_js(&code));
-
-            let result = match tokio::time::timeout(EXECUTION_TIMEOUT, handle).await {
-                Ok(Ok(Ok(output))) => output,
-                Ok(Ok(Err(err))) => return ToolResult::error(err),
-                Ok(Err(join_err)) => {
-                    return ToolResult::error(format!("JS execution thread panicked: {join_err}"))
-                }
-                Err(_) => return ToolResult::error("JS execution timed out after 5 seconds"),
-            };
-
-            // Parse JSON string back to Value for structured output.
-            match serde_json::from_str::<serde_json::Value>(&result) {
-                Ok(value) => ToolResult::json(value),
-                Err(_) => ToolResult::text(result),
-            }
-        })
+        // Parse JSON string back to Value for structured output.
+        match serde_json::from_str::<serde_json::Value>(&result) {
+            Ok(value) => ToolOutput::json(value),
+            Err(_) => ToolOutput::text(result),
+        }
     }
 }
 
@@ -270,11 +276,13 @@ mod tests {
         let result = tool.call(input, &ctx).await;
 
         assert!(!result.is_error, "Unexpected error: {:?}", result.as_text());
-        // Result should contain 14.
-        let content = &result.content[0];
-        match content {
-            crate::ToolContent::Json(v) => assert_eq!(*v, json!(14)),
-            crate::ToolContent::Text(s) => assert!(s.contains("14"), "got: {s}"),
+        // Result should contain 14. In 0.4 Json results are encoded as a
+        // text block containing the JSON string, so check both shapes.
+        if let Some(v) = result.as_json() {
+            assert_eq!(v, json!(14));
+        } else {
+            let s = result.as_text().expect("text or json content");
+            assert!(s.contains("14"), "got: {s}");
         }
     }
 

@@ -66,13 +66,14 @@ impl Default for ToolRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::{ToolContext, ToolResult};
+    use crate::tool::{ToolContext, ToolOutput};
+    use async_trait::async_trait;
+    use motosan_agent_primitives::ToolAnnotations;
     use serde_json::json;
-    use std::future::Future;
-    use std::pin::Pin;
 
     struct EchoTool;
 
+    #[async_trait]
     impl Tool for EchoTool {
         fn def(&self) -> ToolDef {
             ToolDef {
@@ -88,15 +89,18 @@ mod tests {
             }
         }
 
-        fn call(
-            &self,
-            args: serde_json::Value,
-            _ctx: &ToolContext,
-        ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-            Box::pin(async move {
-                let text = args["text"].as_str().unwrap_or("").to_string();
-                ToolResult::text(text)
-            })
+        fn annotations(&self) -> ToolAnnotations {
+            ToolAnnotations {
+                read_only: true,
+                destructive: false,
+                network_access: false,
+                idempotent: true,
+            }
+        }
+
+        async fn call(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+            let text = args["text"].as_str().unwrap_or("").to_string();
+            ToolOutput::text(text)
         }
     }
 

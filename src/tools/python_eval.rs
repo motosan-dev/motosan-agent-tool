@@ -1,11 +1,9 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::process::Command;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// Default execution timeout in seconds.
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
@@ -83,6 +81,7 @@ impl PythonEvalTool {
     }
 }
 
+#[async_trait]
 impl Tool for PythonEvalTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -109,65 +108,65 @@ impl Tool for PythonEvalTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        _ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        Box::pin(async move {
-            let input: PythonEvalInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            network_access: false,
+            idempotent: false,
+        }
+    }
 
-            let timeout_secs = input.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).min(300);
-            let bin = self.python_bin();
+    async fn call(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        let input: PythonEvalInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            let child = match Command::new(&bin)
-                .arg("-c")
-                .arg(&input.code)
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    return ToolResult::error(format!(
-                        "Failed to spawn Python process ({}): {e}",
-                        bin
-                    ))
-                }
-            };
+        let timeout_secs = input.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS).min(300);
+        let bin = self.python_bin();
 
-            let timeout_dur = tokio::time::Duration::from_secs(timeout_secs);
-            let result = tokio::time::timeout(timeout_dur, child.wait_with_output()).await;
-
-            match result {
-                Ok(Ok(output)) => {
-                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                    let exit_code = output.status.code();
-
-                    let eval_output = PythonEvalOutput {
-                        stdout,
-                        stderr,
-                        exit_code,
-                        timed_out: false,
-                    };
-
-                    match serde_json::to_value(eval_output) {
-                        Ok(v) => ToolResult::json(v),
-                        Err(e) => ToolResult::error(format!("Failed to serialize output: {e}")),
-                    }
-                }
-                Ok(Err(e)) => ToolResult::error(format!("Python process error: {e}")),
-                Err(_) => ToolResult::error(format!(
-                    "Execution timed out after {} seconds",
-                    timeout_secs
-                )),
+        let child = match Command::new(&bin)
+            .arg("-c")
+            .arg(&input.code)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return ToolOutput::error(format!("Failed to spawn Python process ({}): {e}", bin))
             }
-        })
+        };
+
+        let timeout_dur = tokio::time::Duration::from_secs(timeout_secs);
+        let result = tokio::time::timeout(timeout_dur, child.wait_with_output()).await;
+
+        match result {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let exit_code = output.status.code();
+
+                let eval_output = PythonEvalOutput {
+                    stdout,
+                    stderr,
+                    exit_code,
+                    timed_out: false,
+                };
+
+                match serde_json::to_value(eval_output) {
+                    Ok(v) => ToolOutput::json(v),
+                    Err(e) => ToolOutput::error(format!("Failed to serialize output: {e}")),
+                }
+            }
+            Ok(Err(e)) => ToolOutput::error(format!("Python process error: {e}")),
+            Err(_) => ToolOutput::error(format!(
+                "Execution timed out after {} seconds",
+                timeout_secs
+            )),
+        }
     }
 }
 
@@ -206,9 +205,9 @@ mod tests {
 
         assert!(!result.is_error, "Unexpected error: {:?}", result.content);
         match &result.content[0] {
-            crate::ToolContent::Json(v) => {
+            motosan_agent_primitives::ContentBlock::Json { value: v } => {
                 assert_eq!(v["stdout"].as_str().unwrap().trim(), "hello world");
-                assert_eq!(v["timed_out"].as_bool().unwrap(), false);
+                assert!(!v["timed_out"].as_bool().unwrap());
                 assert_eq!(v["exit_code"].as_i64().unwrap(), 0);
             }
             other => panic!("Expected Json content, got: {:?}", other),
@@ -229,7 +228,7 @@ mod tests {
 
         assert!(!result.is_error); // process ran, just exited non-zero
         match &result.content[0] {
-            crate::ToolContent::Json(v) => {
+            motosan_agent_primitives::ContentBlock::Json { value: v } => {
                 assert!(v["stderr"].as_str().unwrap().contains("ValueError"));
                 assert_ne!(v["exit_code"].as_i64().unwrap(), 0);
             }

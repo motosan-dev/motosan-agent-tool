@@ -1,12 +1,12 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 
+use async_trait::async_trait;
+use motosan_agent_primitives::ContentBlock;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::tools::currency_convert::CurrencyConvertTool;
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// A tool that calculates study abroad cost breakdowns with currency conversion.
 pub struct CostCalculatorTool {
@@ -102,7 +102,7 @@ impl CostCalculatorTool {
 
         // Extract rate from the converter result
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            ContentBlock::Json { value } => value,
             _ => return Err("Unexpected converter response format".to_string()),
         };
 
@@ -112,6 +112,7 @@ impl CostCalculatorTool {
     }
 }
 
+#[async_trait]
 impl Tool for CostCalculatorTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -169,92 +170,94 @@ impl Tool for CostCalculatorTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        let ctx = ctx.clone();
-        Box::pin(async move {
-            let start = std::time::Instant::now();
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            network_access: true,
+            idempotent: false,
+        }
+    }
 
-            let input: CostCalculatorInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+        let start = std::time::Instant::now();
 
-            if input.items.is_empty() {
-                return ToolResult::error("Items list must not be empty.");
-            }
+        let input: CostCalculatorInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            let target = input.target_currency.trim().to_uppercase();
+        if input.items.is_empty() {
+            return ToolOutput::error("Items list must not be empty.");
+        }
 
-            // Collect unique source currencies that need conversion
-            let mut rates_used: HashMap<String, f64> = HashMap::new();
-            let mut item_results: Vec<CostItemResult> = Vec::with_capacity(input.items.len());
-            let mut subtotals: HashMap<String, f64> = HashMap::new();
+        let target = input.target_currency.trim().to_uppercase();
 
-            for item in &input.items {
-                let from = item.currency.trim().to_uppercase();
+        // Collect unique source currencies that need conversion
+        let mut rates_used: HashMap<String, f64> = HashMap::new();
+        let mut item_results: Vec<CostItemResult> = Vec::with_capacity(input.items.len());
+        let mut subtotals: HashMap<String, f64> = HashMap::new();
 
-                // Get or fetch rate
-                let rate = if let Some(&cached_rate) = rates_used.get(&from) {
-                    cached_rate
-                } else {
-                    match self.get_rate(&from, &target, &ctx).await {
-                        Ok(r) => {
-                            rates_used.insert(from.clone(), r);
-                            r
-                        }
-                        Err(e) => return ToolResult::error(e),
+        for item in &input.items {
+            let from = item.currency.trim().to_uppercase();
+
+            // Get or fetch rate
+            let rate = if let Some(&cached_rate) = rates_used.get(&from) {
+                cached_rate
+            } else {
+                match self.get_rate(&from, &target, ctx).await {
+                    Ok(r) => {
+                        rates_used.insert(from.clone(), r);
+                        r
                     }
-                };
-
-                let quantity = if item.quantity == 0.0 {
-                    1.0
-                } else {
-                    item.quantity
-                };
-                let converted = (item.amount * rate * quantity * 100.0).round() / 100.0;
-
-                // Accumulate subtotal
-                *subtotals.entry(item.category.clone()).or_insert(0.0) += converted;
-
-                item_results.push(CostItemResult {
-                    category: item.category.clone(),
-                    description: item.description.clone(),
-                    amount: item.amount,
-                    currency: from,
-                    quantity,
-                    unit: item.unit.clone(),
-                    rate,
-                    converted,
-                });
-            }
-
-            // Round subtotals
-            for val in subtotals.values_mut() {
-                *val = (*val * 100.0).round() / 100.0;
-            }
-
-            let total: f64 = subtotals.values().sum();
-            let total = (total * 100.0).round() / 100.0;
-
-            let output = CostCalculatorOutput {
-                items: item_results,
-                subtotals,
-                total,
-                target_currency: target,
-                rates_used,
+                    Err(e) => return ToolOutput::error(e),
+                }
             };
 
-            let duration = start.elapsed().as_millis() as u64;
+            let quantity = if item.quantity == 0.0 {
+                1.0
+            } else {
+                item.quantity
+            };
+            let converted = (item.amount * rate * quantity * 100.0).round() / 100.0;
 
-            match serde_json::to_value(&output) {
-                Ok(v) => ToolResult::json(v).with_duration(duration),
-                Err(e) => ToolResult::error(format!("Failed to serialize output: {e}")),
-            }
-        })
+            // Accumulate subtotal
+            *subtotals.entry(item.category.clone()).or_insert(0.0) += converted;
+
+            item_results.push(CostItemResult {
+                category: item.category.clone(),
+                description: item.description.clone(),
+                amount: item.amount,
+                currency: from,
+                quantity,
+                unit: item.unit.clone(),
+                rate,
+                converted,
+            });
+        }
+
+        // Round subtotals
+        for val in subtotals.values_mut() {
+            *val = (*val * 100.0).round() / 100.0;
+        }
+
+        let total: f64 = subtotals.values().sum();
+        let total = (total * 100.0).round() / 100.0;
+
+        let output = CostCalculatorOutput {
+            items: item_results,
+            subtotals,
+            total,
+            target_currency: target,
+            rates_used,
+        };
+
+        let duration = start.elapsed().as_millis() as u64;
+
+        match serde_json::to_value(&output) {
+            Ok(v) => ToolOutput::json(v).with_duration(duration),
+            Err(e) => ToolOutput::error(format!("Failed to serialize output: {e}")),
+        }
     }
 }
 
@@ -331,7 +334,7 @@ mod tests {
         );
 
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
 
@@ -379,7 +382,7 @@ mod tests {
         );
 
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
 
@@ -427,7 +430,7 @@ mod tests {
         assert!(!result.is_error);
 
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
 
@@ -460,7 +463,7 @@ mod tests {
         assert!(!result.is_error);
 
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
 
@@ -506,7 +509,7 @@ mod tests {
         assert!(!result.is_error);
 
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
         assert_eq!(json_val["target_currency"], "TWD");
@@ -527,7 +530,7 @@ mod tests {
         assert!(!result.is_error);
 
         let json_val = match &result.content[0] {
-            crate::ToolContent::Json(v) => v,
+            ContentBlock::Json { value: v } => v,
             _ => panic!("Expected JSON content"),
         };
 

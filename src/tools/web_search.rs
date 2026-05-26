@@ -1,11 +1,9 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 const BRAVE_SEARCH_ENDPOINT: &str = "https://api.search.brave.com/res/v1/web/search";
 const TAVILY_SEARCH_ENDPOINT: &str = "https://api.tavily.com/search";
@@ -135,18 +133,17 @@ impl WebSearchTool {
                 } else if let Some(k) = brave_key {
                     Ok((SearchProvider::Brave, k))
                 } else {
-                    Err(
-                        "No search API key is configured. \
+                    Err("No search API key is configured. \
                          Set TAVILY_API_KEY (or ctx.extra[\"tavily_api_key\"]) for Tavily, \
                          or BRAVE_API_KEY (or ctx.extra[\"brave_api_key\"]) for Brave Search."
-                            .to_string(),
-                    )
+                        .to_string())
                 }
             }
         }
     }
 }
 
+#[async_trait]
 impl Tool for WebSearchTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -172,60 +169,62 @@ impl Tool for WebSearchTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
-        let ctx = ctx.clone();
-        Box::pin(async move {
-            let start = std::time::Instant::now();
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: false,
+            network_access: true,
+            idempotent: false,
+        }
+    }
 
-            let input: WebSearchInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
+        let start = std::time::Instant::now();
 
-            let (provider, api_key) = match self.select_provider(&ctx) {
-                Ok(pair) => pair,
-                Err(msg) => return ToolResult::error(msg),
-            };
+        let input: WebSearchInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            let results = match provider {
-                SearchProvider::Brave => self.search_brave(&api_key, &input).await,
-                SearchProvider::Tavily => self.search_tavily(&api_key, &input).await,
-            };
+        let (provider, api_key) = match self.select_provider(ctx) {
+            Ok(pair) => pair,
+            Err(msg) => return ToolOutput::error(msg),
+        };
 
-            let results = match results {
-                Ok(r) => r,
-                Err(e) => return e,
-            };
+        let results = match provider {
+            SearchProvider::Brave => self.search_brave(&api_key, &input).await,
+            SearchProvider::Tavily => self.search_tavily(&api_key, &input).await,
+        };
 
-            // Format as readable text.
-            let mut text = format!("Found {} results:\n\n", results.len());
-            for (i, r) in results.iter().enumerate() {
-                text.push_str(&format!(
-                    "{}. {}\n   {}\n   {}\n\n",
-                    i + 1,
-                    r.title,
-                    r.url,
-                    r.description
-                ));
-            }
+        let results = match results {
+            Ok(r) => r,
+            Err(e) => return e,
+        };
 
-            let citation: String = results
-                .iter()
-                .map(|r| r.url.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
+        // Format as readable text.
+        let mut text = format!("Found {} results:\n\n", results.len());
+        for (i, r) in results.iter().enumerate() {
+            text.push_str(&format!(
+                "{}. {}\n   {}\n   {}\n\n",
+                i + 1,
+                r.title,
+                r.url,
+                r.description
+            ));
+        }
 
-            let duration = start.elapsed().as_millis() as u64;
-            let mut result = ToolResult::text(text.trim()).with_duration(duration);
-            if !citation.is_empty() {
-                result = result.with_citation(citation);
-            }
-            result
-        })
+        let citation: String = results
+            .iter()
+            .map(|r| r.url.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let duration = start.elapsed().as_millis() as u64;
+        let mut result = ToolOutput::text(text.trim()).with_duration(duration);
+        if !citation.is_empty() {
+            result = result.with_citation(citation);
+        }
+        result
     }
 }
 
@@ -234,7 +233,7 @@ impl WebSearchTool {
         &self,
         api_key: &str,
         input: &WebSearchInput,
-    ) -> Result<Vec<SearchResult>, ToolResult> {
+    ) -> Result<Vec<SearchResult>, ToolOutput> {
         let response = self
             .http
             .get(BRAVE_SEARCH_ENDPOINT)
@@ -246,20 +245,19 @@ impl WebSearchTool {
             ])
             .send()
             .await
-            .map_err(|e| ToolResult::error(format!("Failed to call Brave Search API: {e}")))?;
+            .map_err(|e| ToolOutput::error(format!("Failed to call Brave Search API: {e}")))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(ToolResult::error(format!(
+            return Err(ToolOutput::error(format!(
                 "Brave Search API error {status}: {body}"
             )));
         }
 
-        let brave_response: BraveSearchResponse = response
-            .json()
-            .await
-            .map_err(|e| ToolResult::error(format!("Failed to parse Brave Search response: {e}")))?;
+        let brave_response: BraveSearchResponse = response.json().await.map_err(|e| {
+            ToolOutput::error(format!("Failed to parse Brave Search response: {e}"))
+        })?;
 
         Ok(brave_response
             .web
@@ -280,7 +278,7 @@ impl WebSearchTool {
         &self,
         api_key: &str,
         input: &WebSearchInput,
-    ) -> Result<Vec<SearchResult>, ToolResult> {
+    ) -> Result<Vec<SearchResult>, ToolOutput> {
         let body = json!({
             "query": input.query,
             "max_results": input.max_results,
@@ -294,20 +292,19 @@ impl WebSearchTool {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ToolResult::error(format!("Failed to call Tavily Search API: {e}")))?;
+            .map_err(|e| ToolOutput::error(format!("Failed to call Tavily Search API: {e}")))?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(ToolResult::error(format!(
+            return Err(ToolOutput::error(format!(
                 "Tavily Search API error {status}: {body}"
             )));
         }
 
-        let tavily_response: TavilySearchResponse = response
-            .json()
-            .await
-            .map_err(|e| ToolResult::error(format!("Failed to parse Tavily Search response: {e}")))?;
+        let tavily_response: TavilySearchResponse = response.json().await.map_err(|e| {
+            ToolOutput::error(format!("Failed to parse Tavily Search response: {e}"))
+        })?;
 
         Ok(tavily_response
             .results

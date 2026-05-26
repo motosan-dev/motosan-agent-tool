@@ -1,10 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// A tool that generates PDF files from plain text or basic Markdown content.
 ///
@@ -266,6 +264,7 @@ fn word_wrap(text: &str, max_chars: usize) -> Vec<String> {
     lines
 }
 
+#[async_trait]
 impl Tool for GeneratePdfTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -299,65 +298,69 @@ impl Tool for GeneratePdfTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            network_access: false,
+            idempotent: false,
+        }
+    }
+
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         let cwd = ctx.cwd.clone();
-        Box::pin(async move {
-            let mut input: GeneratePdfInput = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+        let mut input: GeneratePdfInput = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            // Resolve relative output_path via ctx.cwd.
-            if !std::path::Path::new(&input.output_path).is_absolute() {
-                if let Some(base) = &cwd {
-                    input.output_path = base.join(&input.output_path).to_string_lossy().into_owned();
-                }
+        // Resolve relative output_path via ctx.cwd.
+        if !std::path::Path::new(&input.output_path).is_absolute() {
+            if let Some(base) = &cwd {
+                input.output_path = base.join(&input.output_path).to_string_lossy().into_owned();
             }
+        }
 
-            // Path traversal protection.
-            if input.output_path.contains("..") {
-                return ToolResult::error(
-                    "Path traversal detected: paths containing '..' are not allowed",
-                );
-            }
+        // Path traversal protection.
+        if input.output_path.contains("..") {
+            return ToolOutput::error(
+                "Path traversal detected: paths containing '..' are not allowed",
+            );
+        }
 
-            // Validate format.
-            if input.format != "text" && input.format != "markdown" {
-                return ToolResult::error(format!(
-                    "Unsupported format '{}'. Use 'text' or 'markdown'.",
-                    input.format
+        // Validate format.
+        if input.format != "text" && input.format != "markdown" {
+            return ToolOutput::error(format!(
+                "Unsupported format '{}'. Use 'text' or 'markdown'.",
+                input.format
+            ));
+        }
+
+        // Ensure parent directory exists.
+        if let Some(parent) = std::path::Path::new(&input.output_path).parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                return ToolOutput::error(format!(
+                    "Parent directory does not exist: {}",
+                    parent.display()
                 ));
             }
+        }
 
-            // Ensure parent directory exists.
-            if let Some(parent) = std::path::Path::new(&input.output_path).parent() {
-                if !parent.as_os_str().is_empty() && !parent.exists() {
-                    return ToolResult::error(format!(
-                        "Parent directory does not exist: {}",
-                        parent.display()
-                    ));
-                }
-            }
-
-            match render_pdf(&input) {
-                Ok((pages, size_bytes)) => ToolResult::json(json!({
-                    "path": input.output_path,
-                    "pages": pages,
-                    "size_bytes": size_bytes
-                })),
-                Err(e) => ToolResult::error(e),
-            }
-        })
+        match render_pdf(&input) {
+            Ok((pages, size_bytes)) => ToolOutput::json(json!({
+                "path": input.output_path,
+                "pages": pages,
+                "size_bytes": size_bytes
+            })),
+            Err(e) => ToolOutput::error(e),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ContentBlock;
 
     fn test_ctx() -> ToolContext {
         ToolContext::new("test-agent", "test")
@@ -487,11 +490,11 @@ mod tests {
         // Check the JSON result has expected fields.
         let json_content = result.content.first().expect("should have content");
         match json_content {
-            crate::ToolContent::Json(v) => {
-                assert!(v["path"].is_string());
-                assert!(v["pages"].is_number());
-                assert!(v["size_bytes"].is_number());
-                assert_eq!(v["pages"].as_u64().unwrap(), 1);
+            ContentBlock::Json { value } => {
+                assert!(value["path"].is_string());
+                assert!(value["pages"].is_number());
+                assert!(value["size_bytes"].is_number());
+                assert_eq!(value["pages"].as_u64().unwrap(), 1);
             }
             _ => panic!("Expected JSON content"),
         }
@@ -511,7 +514,10 @@ mod tests {
 
         assert!(!result.is_error, "Expected success but got: {:?}", result);
         let output_path = dir.path().join("relative.pdf");
-        assert!(output_path.exists(), "PDF should be written to cwd/relative.pdf");
+        assert!(
+            output_path.exists(),
+            "PDF should be written to cwd/relative.pdf"
+        );
         let bytes = std::fs::read(&output_path).expect("read pdf");
         assert!(bytes.starts_with(b"%PDF"), "File should be a valid PDF");
     }

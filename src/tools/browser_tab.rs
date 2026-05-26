@@ -1,11 +1,9 @@
-use std::future::Future;
-use std::pin::Pin;
-
+use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 
 use super::browser_common::{browser_session, command_with_session, not_found_or_error};
-use crate::{Tool, ToolContext, ToolDef, ToolResult};
+use crate::{Tool, ToolAnnotations, ToolContext, ToolDef, ToolOutput};
 
 /// A tool that manages browser tabs: open, list, switch, and close.
 pub struct BrowserTabTool;
@@ -29,6 +27,7 @@ impl BrowserTabTool {
     }
 }
 
+#[async_trait]
 impl Tool for BrowserTabTool {
     fn def(&self) -> ToolDef {
         ToolDef {
@@ -58,200 +57,199 @@ impl Tool for BrowserTabTool {
         }
     }
 
-    fn call(
-        &self,
-        args: serde_json::Value,
-        ctx: &ToolContext,
-    ) -> Pin<Box<dyn Future<Output = ToolResult> + Send + '_>> {
+    fn annotations(&self) -> ToolAnnotations {
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            network_access: true,
+            idempotent: false,
+        }
+    }
+
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         let session = browser_session(ctx);
-        Box::pin(async move {
-            let input: Input = match serde_json::from_value(args) {
-                Ok(v) => v,
-                Err(e) => return ToolResult::error(format!("Invalid input: {e}")),
-            };
+        let input: Input = match serde_json::from_value(args) {
+            Ok(v) => v,
+            Err(e) => return ToolOutput::error(format!("Invalid input: {e}")),
+        };
 
-            let session_ref = session.as_deref();
+        let session_ref = session.as_deref();
 
-            match input.action.as_str() {
-                "new" => {
-                    let child = match command_with_session(session_ref)
-                        .args(["tab", "new"])
+        match input.action.as_str() {
+            "new" => {
+                let child = match command_with_session(session_ref)
+                    .args(["tab", "new"])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => return ToolOutput::error(not_found_or_error(e)),
+                };
+
+                let output = match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    child.wait_with_output(),
+                )
+                .await
+                {
+                    Ok(Ok(o)) => o,
+                    Ok(Err(e)) => return ToolOutput::error(format!("Process error: {e}")),
+                    Err(_) => return ToolOutput::error("Tab new timed out"),
+                };
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return ToolOutput::error(format!("tab new failed: {stderr}"));
+                }
+
+                // If URL provided, navigate in the new tab
+                if let Some(ref url) = input.url {
+                    let nav_child = match command_with_session(session_ref)
+                        .args(["open", url])
                         .stdout(std::process::Stdio::piped())
                         .stderr(std::process::Stdio::piped())
                         .kill_on_drop(true)
                         .spawn()
                     {
                         Ok(c) => c,
-                        Err(e) => return ToolResult::error(not_found_or_error(e)),
+                        Err(e) => return ToolOutput::error(not_found_or_error(e)),
                     };
 
-                    let output = match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(10),
-                        child.wait_with_output(),
+                    match tokio::time::timeout(
+                        tokio::time::Duration::from_secs(30),
+                        nav_child.wait_with_output(),
                     )
                     .await
                     {
-                        Ok(Ok(o)) => o,
-                        Ok(Err(e)) => return ToolResult::error(format!("Process error: {e}")),
-                        Err(_) => return ToolResult::error("Tab new timed out"),
-                    };
-
-                    if !output.status.success() {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        return ToolResult::error(format!("tab new failed: {stderr}"));
+                        Ok(Ok(o)) if o.status.success() => {}
+                        Ok(Ok(o)) => {
+                            let stderr = String::from_utf8_lossy(&o.stderr);
+                            return ToolOutput::error(format!("navigate failed: {stderr}"));
+                        }
+                        Ok(Err(e)) => return ToolOutput::error(format!("Process error: {e}")),
+                        Err(_) => return ToolOutput::error("Navigation timed out"),
                     }
 
-                    // If URL provided, navigate in the new tab
-                    if let Some(ref url) = input.url {
-                        let nav_child = match command_with_session(session_ref)
-                            .args(["open", url])
-                            .stdout(std::process::Stdio::piped())
-                            .stderr(std::process::Stdio::piped())
-                            .kill_on_drop(true)
-                            .spawn()
-                        {
-                            Ok(c) => c,
-                            Err(e) => return ToolResult::error(not_found_or_error(e)),
-                        };
-
-                        match tokio::time::timeout(
-                            tokio::time::Duration::from_secs(30),
-                            nav_child.wait_with_output(),
-                        )
-                        .await
-                        {
-                            Ok(Ok(o)) if o.status.success() => {}
-                            Ok(Ok(o)) => {
-                                let stderr = String::from_utf8_lossy(&o.stderr);
-                                return ToolResult::error(format!("navigate failed: {stderr}"));
-                            }
-                            Ok(Err(e)) => return ToolResult::error(format!("Process error: {e}")),
-                            Err(_) => return ToolResult::error("Navigation timed out"),
-                        }
-
-                        ToolResult::text(format!("Opened new tab and navigated to {url}"))
+                    ToolOutput::text(format!("Opened new tab and navigated to {url}"))
+                } else {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    ToolOutput::text(if stdout.trim().is_empty() {
+                        "Opened new tab".to_string()
                     } else {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        ToolResult::text(if stdout.trim().is_empty() {
-                            "Opened new tab".to_string()
-                        } else {
-                            stdout.to_string()
-                        })
-                    }
+                        stdout.to_string()
+                    })
                 }
-                "list" => {
-                    let child = match command_with_session(session_ref)
-                        .args(["tab", "list"])
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .kill_on_drop(true)
-                        .spawn()
-                    {
-                        Ok(c) => c,
-                        Err(e) => return ToolResult::error(not_found_or_error(e)),
-                    };
-
-                    match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(10),
-                        child.wait_with_output(),
-                    )
-                    .await
-                    {
-                        Ok(Ok(o)) if o.status.success() => {
-                            let stdout = String::from_utf8_lossy(&o.stdout);
-                            ToolResult::text(stdout.to_string())
-                        }
-                        Ok(Ok(o)) => {
-                            let stderr = String::from_utf8_lossy(&o.stderr);
-                            ToolResult::error(format!("tab list failed: {stderr}"))
-                        }
-                        Ok(Err(e)) => ToolResult::error(format!("Process error: {e}")),
-                        Err(_) => ToolResult::error("Tab list timed out"),
-                    }
-                }
-                "switch" => {
-                    let idx = match input.index {
-                        Some(i) => i.to_string(),
-                        None => {
-                            return ToolResult::error("'switch' action requires 'index' parameter")
-                        }
-                    };
-
-                    let child = match command_with_session(session_ref)
-                        .args(["tab", &idx])
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .kill_on_drop(true)
-                        .spawn()
-                    {
-                        Ok(c) => c,
-                        Err(e) => return ToolResult::error(not_found_or_error(e)),
-                    };
-
-                    match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(10),
-                        child.wait_with_output(),
-                    )
-                    .await
-                    {
-                        Ok(Ok(o)) if o.status.success() => {
-                            ToolResult::text(format!("Switched to tab {idx}"))
-                        }
-                        Ok(Ok(o)) => {
-                            let stderr = String::from_utf8_lossy(&o.stderr);
-                            ToolResult::error(format!("tab switch failed: {stderr}"))
-                        }
-                        Ok(Err(e)) => ToolResult::error(format!("Process error: {e}")),
-                        Err(_) => ToolResult::error("Tab switch timed out"),
-                    }
-                }
-                "close" => {
-                    if let Some(i) = input.index {
-                        // If index given, switch to that tab first then close
-                        let idx_str = i.to_string();
-                        let _ = command_with_session(session_ref)
-                            .args(["tab", &idx_str])
-                            .stdout(std::process::Stdio::null())
-                            .stderr(std::process::Stdio::null())
-                            .kill_on_drop(true)
-                            .spawn();
-                        // Small delay for switch
-                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                    }
-
-                    let child = match command_with_session(session_ref)
-                        .args(["tab", "close"])
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .kill_on_drop(true)
-                        .spawn()
-                    {
-                        Ok(c) => c,
-                        Err(e) => return ToolResult::error(not_found_or_error(e)),
-                    };
-
-                    match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(10),
-                        child.wait_with_output(),
-                    )
-                    .await
-                    {
-                        Ok(Ok(o)) if o.status.success() => {
-                            ToolResult::text("Tab closed".to_string())
-                        }
-                        Ok(Ok(o)) => {
-                            let stderr = String::from_utf8_lossy(&o.stderr);
-                            ToolResult::error(format!("tab close failed: {stderr}"))
-                        }
-                        Ok(Err(e)) => ToolResult::error(format!("Process error: {e}")),
-                        Err(_) => ToolResult::error("Tab close timed out"),
-                    }
-                }
-                other => ToolResult::error(format!(
-                    "Unknown tab action: '{other}'. Use: new, list, switch, close"
-                )),
             }
-        })
+            "list" => {
+                let child = match command_with_session(session_ref)
+                    .args(["tab", "list"])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => return ToolOutput::error(not_found_or_error(e)),
+                };
+
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    child.wait_with_output(),
+                )
+                .await
+                {
+                    Ok(Ok(o)) if o.status.success() => {
+                        let stdout = String::from_utf8_lossy(&o.stdout);
+                        ToolOutput::text(stdout.to_string())
+                    }
+                    Ok(Ok(o)) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        ToolOutput::error(format!("tab list failed: {stderr}"))
+                    }
+                    Ok(Err(e)) => ToolOutput::error(format!("Process error: {e}")),
+                    Err(_) => ToolOutput::error("Tab list timed out"),
+                }
+            }
+            "switch" => {
+                let idx = match input.index {
+                    Some(i) => i.to_string(),
+                    None => return ToolOutput::error("'switch' action requires 'index' parameter"),
+                };
+
+                let child = match command_with_session(session_ref)
+                    .args(["tab", &idx])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => return ToolOutput::error(not_found_or_error(e)),
+                };
+
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    child.wait_with_output(),
+                )
+                .await
+                {
+                    Ok(Ok(o)) if o.status.success() => {
+                        ToolOutput::text(format!("Switched to tab {idx}"))
+                    }
+                    Ok(Ok(o)) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        ToolOutput::error(format!("tab switch failed: {stderr}"))
+                    }
+                    Ok(Err(e)) => ToolOutput::error(format!("Process error: {e}")),
+                    Err(_) => ToolOutput::error("Tab switch timed out"),
+                }
+            }
+            "close" => {
+                if let Some(i) = input.index {
+                    // If index given, switch to that tab first then close
+                    let idx_str = i.to_string();
+                    let _ = command_with_session(session_ref)
+                        .args(["tab", &idx_str])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .kill_on_drop(true)
+                        .spawn();
+                    // Small delay for switch
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                }
+
+                let child = match command_with_session(session_ref)
+                    .args(["tab", "close"])
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+                {
+                    Ok(c) => c,
+                    Err(e) => return ToolOutput::error(not_found_or_error(e)),
+                };
+
+                match tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    child.wait_with_output(),
+                )
+                .await
+                {
+                    Ok(Ok(o)) if o.status.success() => ToolOutput::text("Tab closed".to_string()),
+                    Ok(Ok(o)) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        ToolOutput::error(format!("tab close failed: {stderr}"))
+                    }
+                    Ok(Err(e)) => ToolOutput::error(format!("Process error: {e}")),
+                    Err(_) => ToolOutput::error("Tab close timed out"),
+                }
+            }
+            other => ToolOutput::error(format!(
+                "Unknown tab action: '{other}'. Use: new, list, switch, close"
+            )),
+        }
     }
 }
 
