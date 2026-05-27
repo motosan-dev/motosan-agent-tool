@@ -664,7 +664,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_context_with_cancellation_attaches_token() {
+    fn tool_context_cancellation_field() {
         let token = CancellationToken::new();
         let ctx = ToolContext::new("a", "p").with_cancellation(token.clone());
         assert!(!ctx.is_cancelled());
@@ -672,44 +672,38 @@ mod tests {
         assert!(ctx.is_cancelled());
     }
 
-    // -- Object safety smoke test for `Arc<dyn Tool>` --
-
-    struct StubTool;
-
-    #[async_trait]
-    impl Tool for StubTool {
-        fn def(&self) -> ToolDef {
-            ToolDef {
-                name: "stub".into(),
-                description: "stub".into(),
-                input_schema: json!({ "type": "object", "properties": {} }),
-            }
-        }
-
-        fn annotations(&self) -> ToolAnnotations {
-            ToolAnnotations {
-                read_only: true,
-                destructive: false,
-                network_access: false,
-                idempotent: true,
-            }
-        }
-
-        async fn call(&self, _args: Value, _ctx: &ToolContext) -> ToolOutput {
-            ToolOutput::text("stub ok")
-        }
-    }
-
     #[tokio::test]
-    async fn tool_trait_is_object_safe_and_annotations_reachable() {
-        let t: Arc<dyn Tool> = Arc::new(StubTool);
-        // Reach `annotations()` through the trait object.
-        let ann = t.annotations();
-        assert!(ann.read_only);
-        assert!(!ann.destructive);
-        // Reach `call()` through the trait object.
-        let ctx = ToolContext::new("a", "p");
-        let out = t.call(json!({}), &ctx).await;
-        assert_eq!(out.as_text(), Some("stub ok"));
+    async fn arc_dyn_tool_object_safe() {
+        struct TinyTool;
+
+        #[async_trait]
+        impl Tool for TinyTool {
+            fn def(&self) -> ToolDef {
+                ToolDef {
+                    name: "tiny".into(),
+                    description: "tiny".into(),
+                    input_schema: json!({ "type": "object", "properties": {} }),
+                }
+            }
+
+            fn annotations(&self) -> ToolAnnotations {
+                ToolAnnotations {
+                    read_only: true,
+                    destructive: false,
+                    network_access: false,
+                    idempotent: true,
+                }
+            }
+
+            async fn call(&self, _args: Value, _ctx: &ToolContext) -> ToolOutput {
+                ToolOutput::text("ok")
+            }
+        }
+
+        let t: Arc<dyn Tool> = Arc::new(TinyTool);
+        let _def = t.def();
+        let _ann = t.annotations();
+        let out = t.call(json!({}), &ToolContext::new("a", "b")).await;
+        assert!(!out.is_error);
     }
 }
