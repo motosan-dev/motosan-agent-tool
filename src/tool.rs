@@ -24,10 +24,10 @@
 //! a wire-format `primitives::ToolResult` at the boundary — see
 //! [`ToolOutput::into_tool_result`].
 
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Deref};
 
 use async_trait::async_trait;
-use motosan_agent_primitives::{ContentBlock, ToolAnnotations, ToolResult};
+use motosan_agent_primitives::{ContentBlock, ToolAnnotations, ToolResult, ToolSchema};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
@@ -71,7 +71,9 @@ pub trait Tool: Send + Sync {
 // ToolDef
 // ---------------------------------------------------------------------------
 
-/// Definition of a tool, suitable for serialization to LLM APIs (Claude, OpenAI, etc.).
+/// Host-side tool definition: the LLM-facing [`ToolSchema`] plus an
+/// `internal_name` used for collision detection / audit correlation
+/// (NOT sent to the model).
 ///
 /// # `name` vs `internal_name`
 ///
@@ -92,21 +94,27 @@ pub trait Tool: Send + Sync {
 /// standard derive — `internal_name` is always emitted.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ToolDef {
-    /// Registered tool name.
-    pub name: String,
-    /// Human-readable description shown to the model.
-    pub description: String,
-    /// JSON Schema describing the tool's input shape.
-    pub input_schema: Value,
+    /// Canonical model-visible schema fields, flattened to preserve the
+    /// legacy serialized shape (`name`, `description`, `input_schema`).
+    #[serde(flatten)]
+    pub schema: ToolSchema,
     /// Host-side identifier used for collision detection / audit
-    /// correlation. Defaults to a clone of `name` when constructed via
-    /// [`ToolDef::new`]; override with [`ToolDef::with_internal_name`].
+    /// correlation. Defaults to a clone of `schema.name` when constructed
+    /// via [`ToolDef::new`]; override with [`ToolDef::with_internal_name`].
     ///
     /// This field is NOT sent to the LLM as part of the tool-calling
-    /// protocol — only `name` is. It is, however, included on the
+    /// protocol — only `schema.name` is. It is, however, included on the
     /// `Serialize` side so audit / snapshot consumers persist the full
     /// shape.
     pub internal_name: String,
+}
+
+impl Deref for ToolDef {
+    type Target = ToolSchema;
+
+    fn deref(&self) -> &ToolSchema {
+        &self.schema
+    }
 }
 
 // Helper repr used only by the manual `Deserialize` impl below — keeps
@@ -126,11 +134,14 @@ impl<'de> serde::Deserialize<'de> for ToolDef {
         deserializer: D,
     ) -> std::result::Result<Self, D::Error> {
         let repr = ToolDefRepr::deserialize(deserializer)?;
+        let internal_name = repr.internal_name.unwrap_or_else(|| repr.name.clone());
         Ok(Self {
-            internal_name: repr.internal_name.unwrap_or_else(|| repr.name.clone()),
-            name: repr.name,
-            description: repr.description,
-            input_schema: repr.input_schema,
+            schema: ToolSchema {
+                name: repr.name,
+                description: repr.description,
+                input_schema: repr.input_schema,
+            },
+            internal_name,
         })
     }
 }
@@ -147,12 +158,11 @@ impl ToolDef {
         description: impl Into<String>,
         input_schema: Value,
     ) -> Self {
-        let name = name.into();
+        let schema = ToolSchema::new(name, description, input_schema);
+        let internal_name = schema.name.clone();
         Self {
-            internal_name: name.clone(),
-            name,
-            description: description.into(),
-            input_schema,
+            schema,
+            internal_name,
         }
     }
 
@@ -595,6 +605,18 @@ mod tests {
         let parsed: SearchArgs = def.parse_args(args).unwrap();
         assert_eq!(parsed.query, "rust");
         assert_eq!(parsed.max_results, Some(10));
+    }
+
+    #[test]
+    fn tool_def_composes_flattened_tool_schema() {
+        let def = search_def();
+        assert_eq!(def.schema.name, "web_search");
+        assert_eq!(def.name, "web_search");
+
+        let value = serde_json::to_value(&def).unwrap();
+        assert_eq!(value["name"], "web_search");
+        assert_eq!(value["description"], "Search the web");
+        assert!(value.get("schema").is_none());
     }
 
     #[test]

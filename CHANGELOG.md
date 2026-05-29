@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.0 — 2026-05-29
+
+BREAKING:
+- `ToolDef` now composes `motosan_agent_primitives::ToolSchema` via
+  `#[serde(flatten)]`; the serialized wire shape remains unchanged.
+  Field reads (`def.name`, `def.description`, `def.input_schema`) continue
+  to work through `Deref<Target = ToolSchema>`, but struct-literal callers
+  must wrap those fields in `schema: ToolSchema { .. }`.
+
+ADDED:
+- `Deref<Target = ToolSchema>` for `ToolDef`.
+- `ToolSchema` is re-exported at the crate root
+  (`motosan_agent_tool::ToolSchema`) so callers can name the schema type
+  without depending on `motosan-agent-primitives` directly.
+  `ToolDef::new(name, description, input_schema)` remains the preferred
+  constructor.
+
+DEPS:
+- `motosan-agent-primitives` path-dep version pin bumped 0.2.0 → 0.3.0.
+
 ## 0.5.0 — 2026-05-29
 
 M10 D-M10-4 — Tool display name distinct from internal name. Resolves
