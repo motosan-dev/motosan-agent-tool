@@ -15,6 +15,11 @@ BREAKING:
 
 ADDED:
 - `Deref<Target = ToolSchema>` for `ToolDef`.
+- `ToolSchema` is re-exported at the crate root
+  (`motosan_agent_tool::ToolSchema`) so callers can name the schema type
+  without depending on `motosan-agent-primitives` directly.
+  `ToolDef::new(name, description, input_schema)` remains the preferred
+  constructor.
 
 DEPS:
 - `motosan-agent-primitives` path-dep version pin bumped 0.2.0 → 0.3.0.

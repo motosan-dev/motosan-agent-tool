@@ -73,7 +73,7 @@ registry.register(greet)
 
 This crate unifies the tool interfaces of motosan-chat and crucible-agent:
 
-- **`ToolDef`** — host-side wrapper around `motosan_agent_primitives::ToolSchema`; `name`, `description`, and `input_schema` are flattened on the wire and readable through `Deref`, while `internal_name` is used for host routing/audit. Use `ToolDef::new(...)`, and set `.with_internal_name(...)` when host-side routing needs a namespaced identifier distinct from the LLM-facing `name`.
+- **`ToolDef`** — host-side wrapper around `motosan_agent_primitives::ToolSchema`; `name`, `description`, and `input_schema` are flattened on the wire and readable through `Deref`, while `internal_name` is used for host routing/audit. `ToolDef::new(...)` is the preferred constructor; set `.with_internal_name(...)` when host-side routing needs a namespaced identifier distinct from the LLM-facing `name`. `ToolSchema` itself is re-exported at the crate root (`motosan_agent_tool::ToolSchema`) so you can name it without an extra dependency on `motosan-agent-primitives`.
 - **`ToolResult`** — typed content (`Text` | `Json`) + optional metadata (`citation`, `duration_ms`)
 - **`ToolContext`** — common fields (`caller_id`, `platform`, `cwd`) + extensible `extra` map
 - **`ToolRegistry`** — thread-safe async tool storage
