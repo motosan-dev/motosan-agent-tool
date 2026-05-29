@@ -1,6 +1,6 @@
 [package]
 name = "motosan-agent-tool"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/motosan-dev/motosan-agent-tool"
@@ -29,7 +29,7 @@ browser = ["tokio/process", "tokio/time"]
 all_tools = ["web_search", "fetch_url", "read_file", "read_pdf", "read_spreadsheet", "js_eval", "python_eval", "datetime", "currency_convert", "cost_calculator", "generate_pdf", "browser"]
 
 [dependencies]
-motosan-agent-primitives = { path = "../motosan-agent-primitives", version = "0.2.0" }
+motosan-agent-primitives = { path = "../motosan-agent-primitives", version = "0.3.0" }
 async-trait = "0.1"
 # `tokio-util`'s `CancellationToken` lives in `tokio_util::sync` and is part
 # of the default (featureless) build — no `sync` feature exists to enable.

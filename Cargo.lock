@@ -1365,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "motosan-agent-primitives"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1378,7 +1378,7 @@ dependencies = [
 
 [[package]]
 name = "motosan-agent-tool"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "boa_engine",
