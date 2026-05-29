@@ -18,17 +18,17 @@ struct MyTool;
 
 impl Tool for MyTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "my_tool".into(),
-            description: "Does something useful".into(),
-            input_schema: json!({
+        ToolDef::new(
+            "my_tool",
+            "Does something useful",
+            json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" }
                 },
                 "required": ["query"]
             }),
-        }
+        )
     }
 
     fn call(
@@ -73,7 +73,7 @@ registry.register(greet)
 
 This crate unifies the tool interfaces of motosan-chat and crucible-agent:
 
-- **`ToolDef`** — schema validation (type checking, enum checking, required fields)
+- **`ToolDef`** — schema validation (type checking, enum checking, required fields); use `ToolDef::new(...)`, and set `.with_internal_name(...)` when host-side routing needs a namespaced identifier distinct from the LLM-facing `name`
 - **`ToolResult`** — typed content (`Text` | `Json`) + optional metadata (`citation`, `duration_ms`)
 - **`ToolContext`** — common fields (`caller_id`, `platform`, `cwd`) + extensible `extra` map
 - **`ToolRegistry`** — thread-safe async tool storage
@@ -107,10 +107,10 @@ All tools are feature-gated. Enable individually or use `all_tools` to enable al
 ```toml
 # Enable specific tools
 [dependencies]
-motosan-agent-tool = { version = "0.3", features = ["datetime", "web_search"] }
+motosan-agent-tool = { version = "0.5", features = ["datetime", "web_search"] }
 
 # Or enable all
-motosan-agent-tool = { version = "0.3", features = ["all_tools"] }
+motosan-agent-tool = { version = "0.5", features = ["all_tools"] }
 ```
 
 ## Multi-language Support

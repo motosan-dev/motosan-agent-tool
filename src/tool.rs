@@ -122,7 +122,9 @@ struct ToolDefRepr {
 }
 
 impl<'de> serde::Deserialize<'de> for ToolDef {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
         let repr = ToolDefRepr::deserialize(deserializer)?;
         Ok(Self {
             internal_name: repr.internal_name.unwrap_or_else(|| repr.name.clone()),
@@ -614,8 +616,12 @@ mod tests {
 
     #[test]
     fn tool_def_with_internal_name_overrides() {
-        let def = ToolDef::new("place_order", "buy/sell", json!({ "type": "object", "properties": {} }))
-            .with_internal_name("finance.place_order");
+        let def = ToolDef::new(
+            "place_order",
+            "buy/sell",
+            json!({ "type": "object", "properties": {} }),
+        )
+        .with_internal_name("finance.place_order");
         // Public name unchanged — that's what goes to the LLM.
         assert_eq!(def.name, "place_order");
         // Internal name carries the namespaced identifier for host-side
@@ -652,8 +658,12 @@ mod tests {
 
     #[test]
     fn tool_def_serialize_emits_internal_name() {
-        let def = ToolDef::new("place_order", "buy/sell", json!({ "type": "object", "properties": {} }))
-            .with_internal_name("finance.place_order");
+        let def = ToolDef::new(
+            "place_order",
+            "buy/sell",
+            json!({ "type": "object", "properties": {} }),
+        )
+        .with_internal_name("finance.place_order");
         let s = serde_json::to_string(&def).unwrap();
         assert!(
             s.contains("\"internal_name\":\"finance.place_order\""),

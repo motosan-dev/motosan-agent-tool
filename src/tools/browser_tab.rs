@@ -33,7 +33,7 @@ impl Tool for BrowserTabTool {
         ToolDef::new(
             "browser_tab".to_string(),
             "Manage browser tabs: open new tab, switch between tabs, list tabs, close tab."
-                    .to_string(),
+                .to_string(),
             json!({
                 "type": "object",
                 "properties": {

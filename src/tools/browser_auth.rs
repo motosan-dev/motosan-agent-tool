@@ -39,7 +39,7 @@ impl Tool for BrowserAuthTool {
             "Manage browser authentication state. Actions: load (advisory — tells you \
                 to pass --state on next command), save (persist current state), auto-connect-save \
                 (save with auto-connect)."
-                    .to_string(),
+                .to_string(),
             json!({
                 "type": "object",
                 "properties": {
