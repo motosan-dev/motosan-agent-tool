@@ -18,4 +18,6 @@ pub use tool::{Tool, ToolContext, ToolDef, ToolOutput};
 // Convenience re-exports of the wire-format types from primitives so
 // downstream callers can `use motosan_agent_tool::*` without separately
 // depending on `motosan-agent-primitives` for these types.
-pub use motosan_agent_primitives::{ContentBlock, ToolAnnotations, ToolCall, ToolResult};
+pub use motosan_agent_primitives::{
+    ContentBlock, ToolAnnotations, ToolCall, ToolResult, ToolSchema,
+};
