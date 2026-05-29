@@ -34,14 +34,13 @@ impl BrowserAuthTool {
 #[async_trait]
 impl Tool for BrowserAuthTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "browser_auth".to_string(),
-            description:
-                "Manage browser authentication state. Actions: load (advisory — tells you \
+        ToolDef::new(
+            "browser_auth".to_string(),
+            "Manage browser authentication state. Actions: load (advisory — tells you \
                 to pass --state on next command), save (persist current state), auto-connect-save \
                 (save with auto-connect)."
                     .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "action": {
@@ -56,7 +55,7 @@ impl Tool for BrowserAuthTool {
                 },
                 "required": ["action", "path"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

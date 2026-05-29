@@ -159,12 +159,12 @@ impl CurrencyConvertTool {
 #[async_trait]
 impl Tool for CurrencyConvertTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "currency_convert".to_string(),
-            description: "Convert between currencies using live exchange rates. \
+        ToolDef::new(
+            "currency_convert".to_string(),
+            "Convert between currencies using live exchange rates. \
                 Supports batch conversion by providing comma-separated target currencies."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "from": {
@@ -183,7 +183,7 @@ impl Tool for CurrencyConvertTool {
                 },
                 "required": ["from", "to"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

@@ -30,12 +30,11 @@ impl BrowserTabTool {
 #[async_trait]
 impl Tool for BrowserTabTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "browser_tab".to_string(),
-            description:
-                "Manage browser tabs: open new tab, switch between tabs, list tabs, close tab."
+        ToolDef::new(
+            "browser_tab".to_string(),
+            "Manage browser tabs: open new tab, switch between tabs, list tabs, close tab."
                     .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "action": {
@@ -54,7 +53,7 @@ impl Tool for BrowserTabTool {
                 },
                 "required": ["action"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

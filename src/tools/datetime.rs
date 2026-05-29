@@ -44,12 +44,12 @@ impl DatetimeTool {
 #[async_trait]
 impl Tool for DatetimeTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "datetime".to_string(),
-            description: "Date and time utilities. Supports getting the current datetime, \
+        ToolDef::new(
+            "datetime".to_string(),
+            "Date and time utilities. Supports getting the current datetime, \
                 adding offsets to dates, and calculating differences between dates."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "function": {
@@ -80,7 +80,7 @@ impl Tool for DatetimeTool {
                 },
                 "required": ["function"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

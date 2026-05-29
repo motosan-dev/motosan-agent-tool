@@ -72,7 +72,25 @@ pub trait Tool: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Definition of a tool, suitable for serialization to LLM APIs (Claude, OpenAI, etc.).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+///
+/// # `name` vs `internal_name`
+///
+/// `name` is the **public** identifier sent to the LLM in tool-calling APIs
+/// (Anthropic / OpenAI). Some providers restrict the allowed character set
+/// (no dots in some places) and LLM prompt clarity favors short
+/// unqualified names like `place_order`.
+///
+/// `internal_name` is the **host-side** identifier used by the engine for
+/// collision detection across stacked harnesses, audit correlation, and any
+/// other internal bookkeeping. It is free-form (dotted `finance.place_order`,
+/// slashed, namespaced — whatever the host chooses) and defaults to a clone
+/// of `name` when not set explicitly. See [`ToolDef::with_internal_name`].
+///
+/// `Deserialize` is implemented manually so that legacy JSON payloads
+/// without an `internal_name` field continue to deserialize cleanly
+/// (`internal_name` defaults to `name` in that case). `Serialize` is the
+/// standard derive — `internal_name` is always emitted.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ToolDef {
     /// Registered tool name.
     pub name: String,
@@ -80,9 +98,69 @@ pub struct ToolDef {
     pub description: String,
     /// JSON Schema describing the tool's input shape.
     pub input_schema: Value,
+    /// Host-side identifier used for collision detection / audit
+    /// correlation. Defaults to a clone of `name` when constructed via
+    /// [`ToolDef::new`]; override with [`ToolDef::with_internal_name`].
+    ///
+    /// This field is NOT sent to the LLM as part of the tool-calling
+    /// protocol — only `name` is. It is, however, included on the
+    /// `Serialize` side so audit / snapshot consumers persist the full
+    /// shape.
+    pub internal_name: String,
+}
+
+// Helper repr used only by the manual `Deserialize` impl below — keeps
+// `internal_name` as `Option<String>` on the wire so old payloads (which
+// don't have the field) round-trip with `internal_name == name`.
+#[derive(serde::Deserialize)]
+struct ToolDefRepr {
+    name: String,
+    description: String,
+    input_schema: Value,
+    #[serde(default)]
+    internal_name: Option<String>,
+}
+
+impl<'de> serde::Deserialize<'de> for ToolDef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let repr = ToolDefRepr::deserialize(deserializer)?;
+        Ok(Self {
+            internal_name: repr.internal_name.unwrap_or_else(|| repr.name.clone()),
+            name: repr.name,
+            description: repr.description,
+            input_schema: repr.input_schema,
+        })
+    }
 }
 
 impl ToolDef {
+    /// Construct a new `ToolDef` with `internal_name` defaulted to
+    /// `name.clone()`.
+    ///
+    /// Use [`ToolDef::with_internal_name`] to override the host-side
+    /// identifier (e.g. for namespaced harness composition like
+    /// `finance.place_order`).
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        input_schema: Value,
+    ) -> Self {
+        let name = name.into();
+        Self {
+            internal_name: name.clone(),
+            name,
+            description: description.into(),
+            input_schema,
+        }
+    }
+
+    /// Override `internal_name` (builder pattern). The public `name` is
+    /// unchanged.
+    pub fn with_internal_name(mut self, internal_name: impl Into<String>) -> Self {
+        self.internal_name = internal_name.into();
+        self
+    }
+
     /// Validate that the input_schema itself is well-formed.
     pub fn validate_input_schema(&self) -> Result<()> {
         let schema = self
@@ -440,10 +518,10 @@ mod tests {
     }
 
     fn search_def() -> ToolDef {
-        ToolDef {
-            name: "web_search".into(),
-            description: "Search the web".into(),
-            input_schema: json!({
+        ToolDef::new(
+            "web_search",
+            "Search the web",
+            json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
@@ -451,7 +529,7 @@ mod tests {
                 },
                 "required": ["query"]
             }),
-        }
+        )
     }
 
     // -- ToolDef tests (unchanged behaviour from 0.3.x) --
@@ -463,11 +541,7 @@ mod tests {
 
     #[test]
     fn validate_input_schema_rejects_missing_properties() {
-        let def = ToolDef {
-            name: "bad".into(),
-            description: "bad".into(),
-            input_schema: json!({ "type": "object" }),
-        };
+        let def = ToolDef::new("bad", "bad", json!({ "type": "object" }));
         assert!(def.validate_input_schema().is_err());
     }
 
@@ -497,17 +571,17 @@ mod tests {
 
     #[test]
     fn validate_args_checks_enum() {
-        let def = ToolDef {
-            name: "t".into(),
-            description: "t".into(),
-            input_schema: json!({
+        let def = ToolDef::new(
+            "t",
+            "t",
+            json!({
                 "type": "object",
                 "properties": {
                     "lang": { "type": "string", "enum": ["en", "ja", "zh"] }
                 },
                 "required": ["lang"]
             }),
-        };
+        );
         def.validate_args(&json!({ "lang": "en" })).unwrap();
         assert!(def.validate_args(&json!({ "lang": "fr" })).is_err());
     }
@@ -527,6 +601,64 @@ mod tests {
         let json = serde_json::to_string(&def).unwrap();
         let back: ToolDef = serde_json::from_str(&json).unwrap();
         assert_eq!(def, back);
+    }
+
+    // -- ToolDef::new + internal_name (M10 D-M10-4) --
+
+    #[test]
+    fn tool_def_new_defaults_internal_name_to_name() {
+        let def = ToolDef::new("foo", "desc", json!({ "type": "object", "properties": {} }));
+        assert_eq!(def.name, "foo");
+        assert_eq!(def.internal_name, "foo");
+    }
+
+    #[test]
+    fn tool_def_with_internal_name_overrides() {
+        let def = ToolDef::new("place_order", "buy/sell", json!({ "type": "object", "properties": {} }))
+            .with_internal_name("finance.place_order");
+        // Public name unchanged — that's what goes to the LLM.
+        assert_eq!(def.name, "place_order");
+        // Internal name carries the namespaced identifier for host-side
+        // collision detection / audit correlation.
+        assert_eq!(def.internal_name, "finance.place_order");
+    }
+
+    #[test]
+    fn tool_def_deserialize_legacy_without_internal_name_defaults_to_name() {
+        // Old payload shape (pre-0.5.0) — no `internal_name` field.
+        let legacy = r#"{
+            "name": "web_search",
+            "description": "Search the web",
+            "input_schema": { "type": "object", "properties": {} }
+        }"#;
+        let def: ToolDef = serde_json::from_str(legacy).unwrap();
+        assert_eq!(def.name, "web_search");
+        // Defaulted to a clone of `name`.
+        assert_eq!(def.internal_name, "web_search");
+    }
+
+    #[test]
+    fn tool_def_deserialize_with_explicit_internal_name_preserves_it() {
+        let payload = r#"{
+            "name": "place_order",
+            "description": "buy/sell",
+            "input_schema": { "type": "object", "properties": {} },
+            "internal_name": "finance.place_order"
+        }"#;
+        let def: ToolDef = serde_json::from_str(payload).unwrap();
+        assert_eq!(def.name, "place_order");
+        assert_eq!(def.internal_name, "finance.place_order");
+    }
+
+    #[test]
+    fn tool_def_serialize_emits_internal_name() {
+        let def = ToolDef::new("place_order", "buy/sell", json!({ "type": "object", "properties": {} }))
+            .with_internal_name("finance.place_order");
+        let s = serde_json::to_string(&def).unwrap();
+        assert!(
+            s.contains("\"internal_name\":\"finance.place_order\""),
+            "internal_name not in serialized form: {s}"
+        );
     }
 
     // -- ToolOutput tests (replaces 0.3.x ToolResult tests) --
@@ -679,11 +811,11 @@ mod tests {
         #[async_trait]
         impl Tool for TinyTool {
             fn def(&self) -> ToolDef {
-                ToolDef {
-                    name: "tiny".into(),
-                    description: "tiny".into(),
-                    input_schema: json!({ "type": "object", "properties": {} }),
-                }
+                ToolDef::new(
+                    "tiny",
+                    "tiny",
+                    json!({ "type": "object", "properties": {} }),
+                )
             }
 
             fn annotations(&self) -> ToolAnnotations {

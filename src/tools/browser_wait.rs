@@ -32,13 +32,13 @@ impl BrowserWaitTool {
 #[async_trait]
 impl Tool for BrowserWaitTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "browser_wait".to_string(),
-            description: "Wait for a browser condition. Events: load, network-idle, selector, \
+        ToolDef::new(
+            "browser_wait".to_string(),
+            "Wait for a browser condition. Events: load, network-idle, selector, \
                 text, url. Optionally specify a value (selector string, text content, or URL \
                 pattern) and timeout."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "event": {
@@ -58,7 +58,7 @@ impl Tool for BrowserWaitTool {
                 },
                 "required": ["event"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

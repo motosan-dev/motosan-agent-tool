@@ -30,12 +30,12 @@ impl BrowserReadTool {
 #[async_trait]
 impl Tool for BrowserReadTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "browser_read".to_string(),
-            description: "Read data from the browser. Targets: text, html, value (require @ref), \
+        ToolDef::new(
+            "browser_read".to_string(),
+            "Read data from the browser. Targets: text, html, value (require @ref), \
                 url, title (no ref needed)."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "target": {
@@ -50,7 +50,7 @@ impl Tool for BrowserReadTool {
                 },
                 "required": ["target"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

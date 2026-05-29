@@ -267,12 +267,12 @@ fn word_wrap(text: &str, max_chars: usize) -> Vec<String> {
 #[async_trait]
 impl Tool for GeneratePdfTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "generate_pdf".to_string(),
-            description: "Generate a PDF file from plain text or basic Markdown content. \
+        ToolDef::new(
+            "generate_pdf".to_string(),
+            "Generate a PDF file from plain text or basic Markdown content. \
                 Returns the output path, page count, and file size."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "content": {
@@ -295,7 +295,7 @@ impl Tool for GeneratePdfTool {
                 },
                 "required": ["content", "output_path"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

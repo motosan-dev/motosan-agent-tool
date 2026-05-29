@@ -84,13 +84,13 @@ impl PythonEvalTool {
 #[async_trait]
 impl Tool for PythonEvalTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "python_eval".to_string(),
-            description: "Execute Python code for data analysis. The code is run via \
+        ToolDef::new(
+            "python_eval".to_string(),
+            "Execute Python code for data analysis. The code is run via \
                 python3 and stdout/stderr are captured. A 30-second timeout is enforced \
                 by default."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "code": {
@@ -105,7 +105,7 @@ impl Tool for PythonEvalTool {
                 },
                 "required": ["code"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

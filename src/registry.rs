@@ -76,17 +76,17 @@ mod tests {
     #[async_trait]
     impl Tool for EchoTool {
         fn def(&self) -> ToolDef {
-            ToolDef {
-                name: "echo".into(),
-                description: "Echo back the input".into(),
-                input_schema: json!({
+            ToolDef::new(
+                "echo",
+                "Echo back the input",
+                json!({
                     "type": "object",
                     "properties": {
                         "text": { "type": "string" }
                     },
                     "required": ["text"]
                 }),
-            }
+            )
         }
 
         fn annotations(&self) -> ToolAnnotations {

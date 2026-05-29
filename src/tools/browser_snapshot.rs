@@ -22,17 +22,17 @@ impl BrowserSnapshotTool {
 #[async_trait]
 impl Tool for BrowserSnapshotTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "browser_snapshot".to_string(),
-            description: "Capture the browser accessibility tree with @ref annotations. \
+        ToolDef::new(
+            "browser_snapshot".to_string(),
+            "Capture the browser accessibility tree with @ref annotations. \
                 Use the @refs to interact with elements via browser_act."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {},
                 "required": []
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

@@ -31,12 +31,12 @@ impl ReadFileTool {
 #[async_trait]
 impl Tool for ReadFileTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "read_file".to_string(),
-            description: "Read the contents of a local file. Returns the text content \
+        ToolDef::new(
+            "read_file".to_string(),
+            "Read the contents of a local file. Returns the text content \
                 of the file. Only UTF-8 files are supported."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "path": {
@@ -50,7 +50,7 @@ impl Tool for ReadFileTool {
                 },
                 "required": ["path"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

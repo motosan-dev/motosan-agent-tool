@@ -115,13 +115,13 @@ impl CostCalculatorTool {
 #[async_trait]
 impl Tool for CostCalculatorTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "cost_calculator".to_string(),
-            description: "Calculate study abroad cost breakdowns with automatic currency \
+        ToolDef::new(
+            "cost_calculator".to_string(),
+            "Calculate study abroad cost breakdowns with automatic currency \
                 conversion. Groups costs by category and provides subtotals and a grand total \
                 in the target currency."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "items": {
@@ -167,7 +167,7 @@ impl Tool for CostCalculatorTool {
                 },
                 "required": ["items"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

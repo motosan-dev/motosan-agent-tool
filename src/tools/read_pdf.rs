@@ -190,13 +190,13 @@ fn truncate_text(text: &str, max_chars: usize) -> (String, bool) {
 #[async_trait]
 impl Tool for ReadPdfTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "read_pdf".to_string(),
-            description: "Extract text content from a PDF file. Accepts a local file path \
+        ToolDef::new(
+            "read_pdf".to_string(),
+            "Extract text content from a PDF file. Accepts a local file path \
                 or an HTTP/HTTPS URL. Returns the extracted text, truncated to max_chars \
                 (default 50000) if the document is large."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "source": {
@@ -211,7 +211,7 @@ impl Tool for ReadPdfTool {
                 },
                 "required": ["source"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

@@ -44,13 +44,13 @@ impl ReadSpreadsheetTool {
 #[async_trait]
 impl Tool for ReadSpreadsheetTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "read_spreadsheet".to_string(),
-            description: "Read an Excel (.xlsx/.xls) or CSV file. Uses the first row \
+        ToolDef::new(
+            "read_spreadsheet".to_string(),
+            "Read an Excel (.xlsx/.xls) or CSV file. Uses the first row \
                 as column headers and returns a JSON array of row objects. Supports \
                 optional sheet selection and row limit (default: 500)."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "path": {
@@ -69,7 +69,7 @@ impl Tool for ReadSpreadsheetTool {
                 },
                 "required": ["path"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

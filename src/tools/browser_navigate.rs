@@ -30,10 +30,10 @@ impl BrowserNavigateTool {
 #[async_trait]
 impl Tool for BrowserNavigateTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "browser_navigate".to_string(),
-            description: "Navigate the browser to a URL using agent-browser.".to_string(),
-            input_schema: json!({
+        ToolDef::new(
+            "browser_navigate".to_string(),
+            "Navigate the browser to a URL using agent-browser.".to_string(),
+            json!({
                 "type": "object",
                 "properties": {
                     "url": {
@@ -43,7 +43,7 @@ impl Tool for BrowserNavigateTool {
                 },
                 "required": ["url"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

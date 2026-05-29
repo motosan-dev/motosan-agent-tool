@@ -119,12 +119,12 @@ impl FetchUrlTool {
 #[async_trait]
 impl Tool for FetchUrlTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "fetch_url".to_string(),
-            description: "Fetch a web page and extract its readable text content. \
+        ToolDef::new(
+            "fetch_url".to_string(),
+            "Fetch a web page and extract its readable text content. \
                 Strips navigation, ads, scripts, and HTML tags to return clean text."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "url": {
@@ -139,7 +139,7 @@ impl Tool for FetchUrlTool {
                 },
                 "required": ["url"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

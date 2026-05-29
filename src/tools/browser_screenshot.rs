@@ -28,12 +28,12 @@ impl BrowserScreenshotTool {
 #[async_trait]
 impl Tool for BrowserScreenshotTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "browser_screenshot".to_string(),
-            description: "Take a screenshot of the current browser page. Optionally specify a \
+        ToolDef::new(
+            "browser_screenshot".to_string(),
+            "Take a screenshot of the current browser page. Optionally specify a \
                 file path to save it to; otherwise a temporary file is used."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "path": {
@@ -43,7 +43,7 @@ impl Tool for BrowserScreenshotTool {
                 },
                 "required": []
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

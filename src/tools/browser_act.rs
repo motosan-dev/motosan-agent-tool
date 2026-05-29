@@ -35,12 +35,12 @@ impl BrowserActTool {
 #[async_trait]
 impl Tool for BrowserActTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "browser_act".to_string(),
-            description: "Interact with a browser element. Use @ref values from browser_snapshot \
+        ToolDef::new(
+            "browser_act".to_string(),
+            "Interact with a browser element. Use @ref values from browser_snapshot \
                 to target elements. Actions: click, fill, type, hover, select, check, press."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "action": {
@@ -59,7 +59,7 @@ impl Tool for BrowserActTool {
                 },
                 "required": ["action"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

@@ -4,6 +4,53 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.5.0 — 2026-05-29
+
+M10 D-M10-4 — Tool display name distinct from internal name. Resolves
+FinanceHarness AWKWARDNESS #4 (M9 consumer feedback): the docs recommended
+namespaced names like `finance.place_order`, but Anthropic / OpenAI tool
+calling APIs are stricter on naming and LLM prompt clarity favors short
+unqualified names. Finance harness ended up using `place_order` directly,
+conflicting with the docs.
+
+BREAKING:
+- `ToolDef` gains a new `pub internal_name: String` field. The public
+  `name` stays unqualified (what the LLM sees); `internal_name` is the
+  host-side identifier used for collision detection across stacked
+  harnesses and audit correlation. Free-form String — consumers pick
+  dotted (`finance.place_order`), slashed, or any other format.
+- Existing code that constructs `ToolDef` via struct literal must migrate
+  to `ToolDef::new(name, description, input_schema)` (or set the new field
+  explicitly). All 19 in-tree built-in tools migrated mechanically — no
+  semantic change.
+- `ToolDef` now has a manual `Deserialize` impl (was derive). Legacy
+  JSON payloads without an `internal_name` field continue to deserialize
+  cleanly (`internal_name` defaults to a clone of `name`). `Serialize`
+  remains derived — the field is always emitted on the wire so audit /
+  snapshot consumers persist the full shape. Existing serde round-trip
+  test still passes.
+
+ADDED:
+- `ToolDef::new(name, description, input_schema)` constructor.
+  `internal_name` defaults to `name.clone()`.
+- `ToolDef::with_internal_name(impl Into<String>) -> Self` builder for
+  setting a host-side identifier distinct from the LLM-facing `name`.
+  Will be used by `motosan-agent-harness-finance` 0.2.0 in M10 Phase F.
+
+DEPS:
+- `motosan-agent-primitives` path-dep version pin bumped 0.1.1 → 0.2.0
+  (M10 Phase A shipped primitives 0.2.0). No primitives API surface used
+  by this crate changed in 0.2.0 — additive field changes on hook ctx
+  structs that `motosan-agent-tool` does not consume.
+
+NOTES:
+- Tool collision / uniqueness logic in `motosan-agent-loop` (which keys
+  by `name` today) is NOT changed in this release. Phase C of M10
+  migrates the loop's uniqueness check to use `internal_name`.
+- None of the 19 built-in tools sets `internal_name` explicitly — they
+  all default. The finance harness will namespace its tools via
+  `.with_internal_name("finance.{tool}")` in Phase F.
+
 ## 0.4.0 — 2026-05-26
 
 BREAKING:

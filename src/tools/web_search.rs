@@ -146,12 +146,12 @@ impl WebSearchTool {
 #[async_trait]
 impl Tool for WebSearchTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "web_search".to_string(),
-            description: "Search the web using the Brave Search API or Tavily Search API. \
+        ToolDef::new(
+            "web_search".to_string(),
+            "Search the web using the Brave Search API or Tavily Search API. \
                 Returns a list of results with title, URL, and description."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "query": {
@@ -166,7 +166,7 @@ impl Tool for WebSearchTool {
                 },
                 "required": ["query"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {

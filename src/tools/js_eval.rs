@@ -162,15 +162,15 @@ fn execute_js(code: &str) -> Result<String, String> {
 #[async_trait]
 impl Tool for JsEvalTool {
     fn def(&self) -> ToolDef {
-        ToolDef {
-            name: "js_eval".to_string(),
-            description: "Execute JavaScript code in a sandboxed environment. \
+        ToolDef::new(
+            "js_eval".to_string(),
+            "Execute JavaScript code in a sandboxed environment. \
                 No filesystem or network access is available. \
                 Built-in helpers: csv(), sum(), avg(), median(), stdev(), \
                 percentile(), groupBy(), sortBy(), minBy(), maxBy(). \
                 Returns the result of the last expression as JSON."
                 .to_string(),
-            input_schema: json!({
+            json!({
                 "type": "object",
                 "properties": {
                     "code": {
@@ -180,7 +180,7 @@ impl Tool for JsEvalTool {
                 },
                 "required": ["code"]
             }),
-        }
+        )
     }
 
     fn annotations(&self) -> ToolAnnotations {
