@@ -146,6 +146,16 @@ impl<'de> serde::Deserialize<'de> for ToolDef {
     }
 }
 
+/// LLM-wire-safe tool-name rule (Anthropic `^[a-zA-Z0-9_-]{1,128}$`;
+/// OpenAI caps at 64 — use the conservative common denominator).
+fn is_wire_safe_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 impl ToolDef {
     /// Construct a new `ToolDef` with `internal_name` defaulted to
     /// `name.clone()`.
@@ -171,6 +181,28 @@ impl ToolDef {
     pub fn with_internal_name(mut self, internal_name: impl Into<String>) -> Self {
         self.internal_name = internal_name.into();
         self
+    }
+
+    /// Validate the model-visible name is LLM-wire-safe. `internal_name`
+    /// is intentionally NOT constrained (it is never sent to the LLM and
+    /// carries host-side namespacing like `finance.place_order`).
+    pub fn validate_name(&self) -> Result<()> {
+        if is_wire_safe_name(&self.schema.name) {
+            Ok(())
+        } else {
+            Err(Error::Validation(format!(
+                "tool name '{}' is not LLM-wire-safe (must match ^[A-Za-z0-9_-]{{1,64}}$); \
+                 put namespacing in internal_name via ToolDef::with_internal_name",
+                self.schema.name
+            )))
+        }
+    }
+
+    /// Full registration-time validation: name + input_schema.
+    pub fn validate(&self) -> Result<()> {
+        self.validate_name()?;
+        self.validate_input_schema()?;
+        Ok(())
     }
 
     /// Validate that the input_schema itself is well-formed.
@@ -549,6 +581,27 @@ mod tests {
     #[test]
     fn validate_input_schema_accepts_valid() {
         search_def().validate_input_schema().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_dotted_model_name() {
+        let def = ToolDef::new(
+            "demo.echo",
+            "d",
+            serde_json::json!({ "type": "object", "properties": {} }),
+        );
+        assert!(def.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_wire_safe_name_with_dotted_internal() {
+        let def = ToolDef::new(
+            "demo_echo",
+            "d",
+            serde_json::json!({ "type": "object", "properties": {} }),
+        )
+        .with_internal_name("demo.echo");
+        def.validate().unwrap();
     }
 
     #[test]
