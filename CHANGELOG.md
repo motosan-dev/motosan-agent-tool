@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.7.0 — 2026-05-31
+
+### Added
+- `ToolDef::validate()` + `ToolDef::validate_name()` — validates the model-visible
+  `schema.name` against the LLM-wire-safe pattern (`^[A-Za-z0-9_-]{1,64}$`, the
+  conservative Anthropic/OpenAI common denominator). `internal_name` is
+  intentionally NOT constrained: namespacing like `finance.place_order` belongs
+  there (host-side, never sent to the LLM). `motosan-agent-loop` 0.32+ calls this
+  at `Engine::build()` to fail fast on wire-unsafe or duplicate tool names instead
+  of surfacing an opaque provider 400.
+
 ## 0.6.0 — 2026-05-29
 
 BREAKING:
