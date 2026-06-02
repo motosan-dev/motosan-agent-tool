@@ -184,7 +184,7 @@ mod tests {
         let def = tool.def();
         assert_eq!(def.name, "python_eval");
 
-        let schema = def.input_schema;
+        let schema = &def.input_schema;
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["code"].is_object());
         assert!(schema["properties"]["timeout_secs"].is_object());

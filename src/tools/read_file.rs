@@ -144,7 +144,7 @@ mod tests {
         let def = tool.def();
         assert_eq!(def.name, "read_file");
 
-        let schema = def.input_schema;
+        let schema = &def.input_schema;
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["path"].is_object());
         assert!(schema["properties"]["max_chars"].is_object());

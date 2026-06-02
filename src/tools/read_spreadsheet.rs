@@ -375,7 +375,7 @@ mod tests {
         let def = tool.def();
         assert_eq!(def.name, "read_spreadsheet");
 
-        let schema = def.input_schema;
+        let schema = &def.input_schema;
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["path"].is_object());
         assert!(schema["properties"]["sheet"].is_object());

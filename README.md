@@ -107,10 +107,10 @@ All tools are feature-gated. Enable individually or use `all_tools` to enable al
 ```toml
 # Enable specific tools
 [dependencies]
-motosan-agent-tool = { version = "0.6", features = ["datetime", "web_search"] }
+motosan-agent-tool = { version = "0.7", features = ["datetime", "web_search"] }
 
 # Or enable all
-motosan-agent-tool = { version = "0.6", features = ["all_tools"] }
+motosan-agent-tool = { version = "0.7", features = ["all_tools"] }
 ```
 
 ## Multi-language Support

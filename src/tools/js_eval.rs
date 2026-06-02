@@ -240,7 +240,7 @@ mod tests {
         let def = tool.def();
         assert_eq!(def.name, "js_eval");
 
-        let schema = def.input_schema;
+        let schema = &def.input_schema;
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["code"].is_object());
         assert_eq!(schema["required"], json!(["code"]));

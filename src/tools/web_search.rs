@@ -333,7 +333,7 @@ mod tests {
         let def = tool.def();
         assert_eq!(def.name, "web_search");
 
-        let schema = def.input_schema;
+        let schema = &def.input_schema;
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"]["query"].is_object());
         assert!(schema["properties"]["max_results"].is_object());
