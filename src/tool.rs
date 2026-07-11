@@ -453,6 +453,52 @@ impl ToolOutput {
 }
 
 // ---------------------------------------------------------------------------
+// ProgressSink
+// ---------------------------------------------------------------------------
+
+/// Cheap cloneable handle for streaming incremental tool output.
+///
+/// Default = inactive: [`ProgressSink::emit`] is a no-op. Engines construct
+/// active sinks bound to their own event plumbing via [`ProgressSink::new`];
+/// tools call `emit` with text chunks (granularity is the tool's choice —
+/// typically a line or a read buffer). Tools doing expensive formatting
+/// solely for progress output should gate on [`ProgressSink::is_active`].
+///
+/// Neutral type by design: no engine dependencies, mirroring how
+/// [`CancellationToken`] rides [`ToolContext`].
+#[derive(Clone, Default)]
+pub struct ProgressSink(Option<std::sync::Arc<dyn Fn(String) + Send + Sync>>);
+
+impl ProgressSink {
+    /// An active sink that invokes `f` for every emitted chunk.
+    pub fn new(f: impl Fn(String) + Send + Sync + 'static) -> Self {
+        Self(Some(std::sync::Arc::new(f)))
+    }
+
+    /// Emit one chunk of incremental output. No-op when inactive.
+    pub fn emit(&self, chunk: impl Into<String>) {
+        if let Some(f) = &self.0 {
+            f(chunk.into());
+        }
+    }
+
+    /// `true` when an engine attached a consumer.
+    pub fn is_active(&self) -> bool {
+        self.0.is_some()
+    }
+}
+
+impl std::fmt::Debug for ProgressSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.is_active() {
+            "ProgressSink(active)"
+        } else {
+            "ProgressSink(inactive)"
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ToolContext
 // ---------------------------------------------------------------------------
 
@@ -922,5 +968,44 @@ mod tests {
         let _ann = t.annotations();
         let out = t.call(json!({}), &ToolContext::new("a", "b")).await;
         assert!(!out.is_error);
+    }
+}
+
+#[cfg(test)]
+mod progress_sink_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn default_is_inactive_and_emit_is_noop() {
+        let sink = ProgressSink::default();
+        assert!(!sink.is_active());
+        sink.emit("dropped"); // must not panic
+        assert_eq!(format!("{sink:?}"), "ProgressSink(inactive)");
+    }
+
+    #[test]
+    fn active_sink_receives_chunks_in_order() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen_c = Arc::clone(&seen);
+        let sink = ProgressSink::new(move |c| seen_c.lock().unwrap().push(c));
+        assert!(sink.is_active());
+        assert_eq!(format!("{sink:?}"), "ProgressSink(active)");
+        sink.emit("one");
+        sink.emit(String::from("two"));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["one".to_string(), "two".to_string()]
+        );
+    }
+
+    #[test]
+    fn clones_share_the_consumer() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen_c = Arc::clone(&seen);
+        let sink = ProgressSink::new(move |c| seen_c.lock().unwrap().push(c));
+        let clone = sink.clone();
+        clone.emit("via-clone");
+        assert_eq!(*seen.lock().unwrap(), vec!["via-clone".to_string()]);
     }
 }
