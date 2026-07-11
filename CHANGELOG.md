@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.8.0 — 2026-07-11
+
+### Added
+- `ProgressSink` — neutral, cloneable handle for streaming incremental tool
+  output. Default is inactive (`emit` is a no-op); engines construct active
+  sinks. Exported from the crate root.
+- `ToolContext.progress: ProgressSink` (`#[serde(skip, default)]`) and
+  `ToolContext::with_progress(..)`. Tools stream by calling
+  `ctx.progress.emit("chunk")`; gate expensive formatting on
+  `ctx.progress.is_active()`.
+
+### Breaking
+- Exhaustive struct literals of `ToolContext` must add
+  `progress: ProgressSink::default(),` (or switch to `ToolContext::new(..)` /
+  `..Default::default()`). Serde wire format is UNCHANGED (the field is
+  skipped), so persisted contexts and the python/typescript bindings are
+  unaffected.
+
 ## 0.7.0 — 2026-06-02
 
 ### Added

@@ -13,7 +13,7 @@ pub mod tools;
 pub use error::{Error, Result};
 pub use registry::ToolRegistry;
 pub use serde_json::Value;
-pub use tool::{Tool, ToolContext, ToolDef, ToolOutput};
+pub use tool::{ProgressSink, Tool, ToolContext, ToolDef, ToolOutput};
 
 // Convenience re-exports of the wire-format types from primitives so
 // downstream callers can `use motosan_agent_tool::*` without separately
