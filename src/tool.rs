@@ -537,6 +537,12 @@ pub struct ToolContext {
     /// token.
     #[serde(skip, default)]
     pub cancellation_token: CancellationToken,
+    /// Sink for streaming incremental output while the call runs. Engines
+    /// attach an active sink per call; the default is inactive (`emit` is a
+    /// no-op). `#[serde(skip)]` — like `cancellation_token`, a deserialized
+    /// context gets the default (inactive) sink.
+    #[serde(skip, default)]
+    pub progress: ProgressSink,
 }
 
 impl ToolContext {
@@ -548,6 +554,7 @@ impl ToolContext {
             cwd: None,
             extra: HashMap::new(),
             cancellation_token: CancellationToken::new(),
+            progress: ProgressSink::default(),
         }
     }
 
@@ -566,6 +573,12 @@ impl ToolContext {
     /// Attach an engine-provided cancellation token (builder pattern).
     pub fn with_cancellation(mut self, token: CancellationToken) -> Self {
         self.cancellation_token = token;
+        self
+    }
+
+    /// Attach an engine-provided progress sink (builder pattern).
+    pub fn with_progress(mut self, sink: ProgressSink) -> Self {
+        self.progress = sink;
         self
     }
 
@@ -1007,5 +1020,33 @@ mod progress_sink_tests {
         let clone = sink.clone();
         clone.emit("via-clone");
         assert_eq!(*seen.lock().unwrap(), vec!["via-clone".to_string()]);
+    }
+
+    #[test]
+    fn tool_context_default_carries_inactive_sink() {
+        let ctx = ToolContext::default();
+        assert!(!ctx.progress.is_active());
+        let ctx2 = ToolContext::new("caller", "platform");
+        assert!(!ctx2.progress.is_active());
+    }
+
+    #[test]
+    fn tool_context_serde_round_trip_yields_inactive_sink() {
+        let ctx = ToolContext::new("caller", "platform").with_progress(ProgressSink::new(|_| {}));
+        assert!(ctx.progress.is_active());
+        let json = serde_json::to_string(&ctx).expect("serialize");
+        let back: ToolContext = serde_json::from_str(&json).expect("deserialize");
+        assert!(
+            !back.progress.is_active(),
+            "serde(skip) must yield the default inactive sink"
+        );
+        assert_eq!(back.caller_id, "caller");
+        assert_eq!(back.platform, "platform");
+    }
+
+    #[test]
+    fn with_progress_attaches_active_sink() {
+        let ctx = ToolContext::new("c", "p").with_progress(ProgressSink::new(|_| {}));
+        assert!(ctx.progress.is_active());
     }
 }
