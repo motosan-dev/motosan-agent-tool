@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.8.1 — 2026-07-12
+
+### Added
+- `fetch_url` progress phases — the first first-party `ProgressSink` emitter.
+
 ## 0.8.0 — 2026-07-11
 
 ### Added
