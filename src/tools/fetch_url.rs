@@ -151,7 +151,7 @@ impl Tool for FetchUrlTool {
         }
     }
 
-    async fn call(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+    async fn call(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolOutput {
         let start = std::time::Instant::now();
 
         let mut input: FetchUrlInput = match serde_json::from_value(args) {
@@ -172,6 +172,8 @@ impl Tool for FetchUrlTool {
         if let Err(e) = check_ssrf(&input.url) {
             return ToolOutput::error(e);
         }
+
+        ctx.progress.emit(format!("fetching {}", input.url));
 
         let response = match self
             .http
@@ -195,12 +197,15 @@ impl Tool for FetchUrlTool {
                     "Response too large: {cl} bytes exceeds {MAX_RESPONSE_BYTES} byte limit"
                 ));
             }
+            ctx.progress.emit(format!("downloading {cl} bytes"));
         }
 
         let bytes = match response.bytes().await {
             Ok(b) => b,
             Err(e) => return ToolOutput::error(format!("Failed to read response body: {e}")),
         };
+        ctx.progress
+            .emit(format!("downloaded {} bytes", bytes.len()));
         if bytes.len() > MAX_RESPONSE_BYTES {
             return ToolOutput::error(format!(
                 "Response too large: {} bytes exceeds {MAX_RESPONSE_BYTES} byte limit",
@@ -249,6 +254,11 @@ impl Tool for FetchUrlTool {
 fn check_ssrf(url: &str) -> Result<(), String> {
     // Parse out host + port.
     let parsed = reqwest::Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
+    #[cfg(test)]
+    if parsed.host_str() == Some("127.0.0.1") && parsed.path() == "/file.txt" {
+        // A narrowly-scoped localhost seam for the fetch progress test below.
+        return Ok(());
+    }
     let host = parsed
         .host_str()
         .ok_or_else(|| "URL has no host".to_string())?
@@ -278,8 +288,47 @@ fn check_ssrf(url: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    async fn serve_once(body: &'static [u8]) -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(head.as_bytes()).await.unwrap();
+            sock.write_all(body).await.unwrap();
+        });
+        addr
+    }
+
     fn test_ctx() -> ToolContext {
         ToolContext::new("test-agent", "test")
+    }
+
+    #[tokio::test]
+    async fn fetch_url_emits_progress_phases_in_order() {
+        let addr = serve_once(b"hello progress").await;
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen_c = std::sync::Arc::clone(&seen);
+        let ctx =
+            ToolContext::new("t", "test").with_progress(crate::ProgressSink::new(move |chunk| {
+                seen_c.lock().unwrap().push(chunk)
+            }));
+        let url = format!("http://{addr}/file.txt");
+
+        let out = FetchUrlTool::new().call(json!({ "url": url }), &ctx).await;
+        assert!(!out.is_error, "fetch must succeed: {out:?}");
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 3, "three phases: {seen:?}");
+        assert!(seen[0].starts_with("fetching http://"), "{seen:?}");
+        assert_eq!(seen[1], "downloading 14 bytes");
+        assert_eq!(seen[2], "downloaded 14 bytes");
     }
 
     #[test]

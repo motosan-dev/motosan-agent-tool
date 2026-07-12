@@ -1,6 +1,6 @@
 [package]
 name = "motosan-agent-tool"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/motosan-dev/motosan-agent-tool"
@@ -47,6 +47,6 @@ chrono-tz = { version = "0.10", optional = true }
 printpdf = { version = "0.7", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "net", "io-util"] }
 tempfile = "3"
 serial_test = "3"
