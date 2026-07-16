@@ -14,6 +14,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch published sibling dependency sources
+        run: |
+          set -euo pipefail
+          fetch() {
+            local crate="$1"
+            local version="$2"
+            local checksum="$3"
+            local archive
+            archive="$(mktemp)"
+            curl -fsSL --retry 3 \
+              "https://static.crates.io/crates/${crate}/${crate}-${version}.crate" \
+              -o "${archive}"
+            echo "${checksum}  ${archive}" | shasum -a 256 -c -
+            tar -xzf "${archive}" -C ..
+            rm -f "${archive}"
+            mv "../${crate}-${version}" "../${crate}"
+          }
+          fetch motosan-agent-primitives 0.4.0 \
+            8d3b346950341babceec436f503ad88426cbea448f825c1543c5953e0d66fe57
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --all-features
 
@@ -21,6 +40,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch published sibling dependency sources
+        run: |
+          set -euo pipefail
+          fetch() {
+            local crate="$1"
+            local version="$2"
+            local checksum="$3"
+            local archive
+            archive="$(mktemp)"
+            curl -fsSL --retry 3 \
+              "https://static.crates.io/crates/${crate}/${crate}-${version}.crate" \
+              -o "${archive}"
+            echo "${checksum}  ${archive}" | shasum -a 256 -c -
+            tar -xzf "${archive}" -C ..
+            rm -f "${archive}"
+            mv "../${crate}-${version}" "../${crate}"
+          }
+          fetch motosan-agent-primitives 0.4.0 \
+            8d3b346950341babceec436f503ad88426cbea448f825c1543c5953e0d66fe57
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -30,6 +68,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch published sibling dependency sources
+        run: |
+          set -euo pipefail
+          fetch() {
+            local crate="$1"
+            local version="$2"
+            local checksum="$3"
+            local archive
+            archive="$(mktemp)"
+            curl -fsSL --retry 3 \
+              "https://static.crates.io/crates/${crate}/${crate}-${version}.crate" \
+              -o "${archive}"
+            echo "${checksum}  ${archive}" | shasum -a 256 -c -
+            tar -xzf "${archive}" -C ..
+            rm -f "${archive}"
+            mv "../${crate}-${version}" "../${crate}"
+          }
+          fetch motosan-agent-primitives 0.4.0 \
+            8d3b346950341babceec436f503ad88426cbea448f825c1543c5953e0d66fe57
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
