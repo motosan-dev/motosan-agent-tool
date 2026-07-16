@@ -11,6 +11,7 @@ description = "Shared AI agent tool kit — traits, registry, and built-in tools
 authors = ["motosan-dev"]
 keywords = ["ai", "agent", "tool", "llm", "bot"]
 categories = ["development-tools"]
+exclude = ["**/.DS_Store", "docs/superpowers/**"]
 
 [features]
 default = []
