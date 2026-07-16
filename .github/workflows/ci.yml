@@ -24,7 +24,7 @@ jobs:
             local archive
             archive="$(mktemp)"
             curl -fsSL --retry 3 \
-              "https://crates.io/api/v1/crates/${crate}/${version}/download" \
+              "https://static.crates.io/crates/${crate}/${crate}-${version}.crate" \
               -o "${archive}"
             echo "${checksum}  ${archive}" | shasum -a 256 -c -
             tar -xzf "${archive}" -C ..
@@ -50,7 +50,7 @@ jobs:
             local archive
             archive="$(mktemp)"
             curl -fsSL --retry 3 \
-              "https://crates.io/api/v1/crates/${crate}/${version}/download" \
+              "https://static.crates.io/crates/${crate}/${crate}-${version}.crate" \
               -o "${archive}"
             echo "${checksum}  ${archive}" | shasum -a 256 -c -
             tar -xzf "${archive}" -C ..
@@ -78,7 +78,7 @@ jobs:
             local archive
             archive="$(mktemp)"
             curl -fsSL --retry 3 \
-              "https://crates.io/api/v1/crates/${crate}/${version}/download" \
+              "https://static.crates.io/crates/${crate}/${crate}-${version}.crate" \
               -o "${archive}"
             echo "${checksum}  ${archive}" | shasum -a 256 -c -
             tar -xzf "${archive}" -C ..
