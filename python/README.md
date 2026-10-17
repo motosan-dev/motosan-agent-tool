@@ -70,7 +70,7 @@ registry.register(greet)
 ```
 
 For a runnable Python `ToolRegistry` example with keyless web search and page
-fetching, see [Parallel Search MCP](examples/parallel_search/README.md).
+fetching, see [Parallel Search MCP](https://github.com/motosan-dev/motosan-agent-tool/blob/main/python/examples/parallel_search/README.md).
 
 ## Design
 
