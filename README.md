@@ -69,6 +69,9 @@ registry = ToolRegistry()
 registry.register(greet)
 ```
 
+For a runnable Python `ToolRegistry` example with keyless web search and page
+fetching, see [Parallel Search MCP](python/examples/parallel_search/README.md).
+
 ## Design
 
 This crate unifies the tool interfaces of motosan-chat and crucible-agent:
